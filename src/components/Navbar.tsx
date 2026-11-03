@@ -25,6 +25,7 @@ export default function Navbar({
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isServicesOpen, setIsServicesOpen] = useState(false);
+  const [isMobileServicesOpen, setIsMobileServicesOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -52,6 +53,7 @@ export default function Navbar({
   const handleNavClick = (page: string, serviceId?: string) => {
     setIsMobileMenuOpen(false);
     setIsServicesOpen(false);
+    setIsMobileServicesOpen(false);
 
     if (onNavigate) {
       onNavigate(page, serviceId);
@@ -61,6 +63,7 @@ export default function Navbar({
   const handleServiceSelect = (serviceId: string) => {
     setIsServicesOpen(false);
     setIsMobileMenuOpen(false);
+    setIsMobileServicesOpen(false);
     if (onNavigate) {
       onNavigate("service-detail", serviceId);
     }
@@ -289,29 +292,74 @@ export default function Navbar({
                   Home
                 </button>
 
-                <div className="space-y-1.5 py-1">
-                  <div className="px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-white/50 flex items-center justify-between">
-                    <span>Services</span>
-                    <button
-                      type="button"
-                      onClick={() => handleNavClick("services")}
-                      className="text-[#4E8FFF] hover:underline font-semibold capitalize"
-                    >
-                      View All →
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 pl-2">
-                    {ALL_SERVICES.map((srv) => (
+                {/* Services Collapsible Accordion for Mobile */}
+                <div className="flex flex-col">
+                  <div
+                    onClick={() => setIsMobileServicesOpen(!isMobileServicesOpen)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setIsMobileServicesOpen(!isMobileServicesOpen);
+                      }
+                    }}
+                    className={`flex items-center justify-between py-2.5 px-3 rounded-xl transition-colors cursor-pointer select-none ${
+                      currentPage === "services" || currentPage === "service-detail"
+                        ? "bg-[#1E5AFF] text-white"
+                        : isMobileServicesOpen
+                        ? "bg-white/10 text-white"
+                        : "text-white/85 hover:bg-white/10"
+                    }`}
+                  >
+                    <span className="text-sm sm:text-base font-semibold">Services</span>
+                    <div className="flex items-center gap-2">
                       <button
-                        key={srv.id}
                         type="button"
-                        onClick={() => handleServiceSelect(srv.id)}
-                        className="text-left text-xs py-2 px-2.5 rounded-lg text-white/80 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleNavClick("services");
+                        }}
+                        className="text-[11px] font-semibold text-[#4E8FFF] hover:underline px-1.5 py-0.5 rounded cursor-pointer"
                       >
-                        • {srv.title}
+                        View All →
                       </button>
-                    ))}
+                      <div
+                        className={`p-1 rounded-lg text-white/80 transition-transform duration-250 ease-in-out cursor-pointer ${
+                          isMobileServicesOpen ? "rotate-180 text-white" : "rotate-0 text-white/70"
+                        }`}
+                        aria-label={isMobileServicesOpen ? "Collapse services" : "Expand services"}
+                      >
+                        <ChevronDown className="w-4 h-4" />
+                      </div>
+                    </div>
                   </div>
+
+                  <AnimatePresence initial={false}>
+                    {isMobileServicesOpen && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.25, ease: "easeInOut" }}
+                        className="overflow-hidden"
+                      >
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 pl-3 pr-1 py-2 border-l-2 border-[#1E5AFF]/40 ml-3 my-1 bg-white/[0.02] rounded-r-lg">
+                          {ALL_SERVICES.map((srv) => (
+                            <button
+                              key={srv.id}
+                              type="button"
+                              onClick={() => handleServiceSelect(srv.id)}
+                              className="text-left text-xs sm:text-sm py-2 px-2.5 rounded-lg text-white/80 hover:text-white hover:bg-white/10 transition-colors cursor-pointer flex items-center justify-between group"
+                            >
+                              <span className="truncate">• {srv.title}</span>
+                              <ArrowRight className="w-3 h-3 text-[#4E8FFF] opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-1" />
+                            </button>
+                          ))}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
 
                 <button
