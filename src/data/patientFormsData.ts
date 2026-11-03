@@ -53,34 +53,26 @@ export const PATIENT_FORMS: PatientFormItem[] = [
   },
 ];
 
-export async function triggerPatientFormDownload(
+export function triggerPatientFormDownload(
   form: PatientFormItem,
   e?: React.MouseEvent
 ) {
+  // If clicked on a native <a> link that already points to form.downloadUrl, allow native download
   if (e) {
-    e.preventDefault();
+    return;
   }
-  try {
-    const response = await fetch(form.fileUrl);
-    if (!response.ok) {
-      throw new Error("Network response was not ok");
-    }
-    const blob = await response.blob();
-    const pdfBlob = new Blob([blob], { type: "application/pdf" });
-    const blobUrl = window.URL.createObjectURL(pdfBlob);
-    const link = document.createElement("a");
-    link.href = blobUrl;
-    link.download = form.downloadFileName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    setTimeout(() => window.URL.revokeObjectURL(blobUrl), 5000);
-  } catch {
-    const link = document.createElement("a");
-    link.href = form.downloadUrl;
-    link.download = form.downloadFileName;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  }
+
+  // Direct, reliable download trigger via the attachment endpoint
+  const link = document.createElement("a");
+  link.href = form.downloadUrl;
+  link.download = form.downloadFileName;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  document.body.appendChild(link);
+  link.click();
+  setTimeout(() => {
+    try {
+      document.body.removeChild(link);
+    } catch {}
+  }, 300);
 }

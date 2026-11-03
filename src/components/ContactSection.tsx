@@ -286,24 +286,17 @@ export default function ContactSection({ onBookClick }: ContactSectionProps) {
                 </div>
                 <div className="flex flex-col gap-1.5 text-xs font-semibold text-[#1E5AFF]">
                   {PATIENT_FORMS.map((form) => (
-                    <span
+                    <a
                       key={form.id}
-                      onClick={(e) => triggerPatientFormDownload(form, e)}
-                      className="inline-flex items-center gap-1.5 hover:text-[#0452FF] hover:underline transition-colors cursor-pointer w-fit"
+                      href={form.downloadUrl}
+                      download={form.downloadFileName}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 hover:text-[#0452FF] hover:underline transition-colors cursor-pointer w-fit py-0.5"
                     >
-                      <a
-                        href={form.downloadUrl}
-                        download={form.downloadFileName}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          triggerPatientFormDownload(form, e);
-                        }}
-                        className="inline-flex items-center gap-1.5"
-                      >
-                        <span>{form.contactLabel}</span>
-                        <Download className="w-3.5 h-3.5 shrink-0" />
-                      </a>
-                    </span>
+                      <span>{form.contactLabel}</span>
+                      <Download className="w-3.5 h-3.5 shrink-0" />
+                    </a>
                   ))}
                 </div>
               </div>

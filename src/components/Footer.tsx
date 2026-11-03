@@ -177,10 +177,11 @@ export default function Footer({
                 {PATIENT_FORMS.map((form) => (
                   <li key={form.id}>
                     <a
-                      href={form.fileUrl}
+                      href={form.downloadUrl}
                       download={form.downloadFileName}
-                      onClick={(e) => triggerPatientFormDownload(form, e)}
-                      className="inline-flex items-center gap-1.5 hover:text-[#4E8FFF] transition-colors cursor-pointer"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 hover:text-[#4E8FFF] transition-colors cursor-pointer py-0.5"
                     >
                       <Download className="w-3.5 h-3.5 text-[#4E8FFF] shrink-0" />
                       <span>{form.shortTitle}</span>

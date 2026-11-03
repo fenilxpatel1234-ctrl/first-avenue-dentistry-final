@@ -313,25 +313,13 @@ export default function Navbar({
                     }`}
                   >
                     <span className="text-sm sm:text-base font-semibold">Services</span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleNavClick("services");
-                        }}
-                        className="text-[11px] font-semibold text-[#4E8FFF] hover:underline px-1.5 py-0.5 rounded cursor-pointer"
-                      >
-                        View All →
-                      </button>
-                      <div
-                        className={`p-1 rounded-lg text-white/80 transition-transform duration-250 ease-in-out cursor-pointer ${
-                          isMobileServicesOpen ? "rotate-180 text-white" : "rotate-0 text-white/70"
-                        }`}
-                        aria-label={isMobileServicesOpen ? "Collapse services" : "Expand services"}
-                      >
-                        <ChevronDown className="w-4 h-4" />
-                      </div>
+                    <div
+                      className={`p-1 rounded-lg text-white/80 transition-transform duration-250 ease-in-out cursor-pointer ${
+                        isMobileServicesOpen ? "rotate-180 text-white" : "rotate-0 text-white/70"
+                      }`}
+                      aria-label={isMobileServicesOpen ? "Collapse services" : "Expand services"}
+                    >
+                      <ChevronDown className="w-4 h-4" />
                     </div>
                   </div>
 
@@ -356,6 +344,16 @@ export default function Navbar({
                               <ArrowRight className="w-3 h-3 text-[#4E8FFF] opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ml-1" />
                             </button>
                           ))}
+                          <div className="col-span-full pt-1.5 mt-1 border-t border-white/10">
+                            <button
+                              type="button"
+                              onClick={() => handleNavClick("services")}
+                              className="w-full text-left text-xs sm:text-sm py-2 px-2.5 rounded-lg font-bold text-[#4E8FFF] hover:text-white hover:bg-[#1E5AFF]/20 transition-colors cursor-pointer flex items-center justify-between group"
+                            >
+                              <span>View All Services →</span>
+                              <ArrowRight className="w-3.5 h-3.5 text-[#4E8FFF] group-hover:translate-x-1 transition-transform shrink-0" />
+                            </button>
+                          </div>
                         </div>
                       </motion.div>
                     )}
