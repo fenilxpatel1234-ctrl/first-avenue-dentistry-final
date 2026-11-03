@@ -1,11 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   X,
   Calendar as CalendarIcon,
   Phone,
   Mail,
-  User,
   Check,
   ChevronRight,
   ChevronLeft,
@@ -13,9 +12,12 @@ import {
   Download,
   AlertCircle,
   Clock,
-  Sparkles,
   ShieldCheck,
   Loader2,
+  KeyRound,
+  RefreshCw,
+  Lock,
+  Sparkles,
 } from "lucide-react";
 import {
   submitAppointmentRequest,
@@ -31,20 +33,20 @@ interface BookingModalProps {
   initialService?: string;
 }
 
-// Clean, categorized list of treatments
+// Clean, categorized treatments
 const SERVICES = [
-  { id: "teeth-cleaning", title: "Teeth Cleaning & Hygiene", duration: "45 mins", popular: true },
-  { id: "emergency-care", title: "Emergency Dental Care", duration: "Same-Day", popular: true },
-  { id: "teeth-whitening", title: "Professional Teeth Whitening", duration: "60 mins", popular: true },
-  { id: "invisalign", title: "Invisalign & Clear Aligners", duration: "45 mins", popular: true },
-  { id: "dental-implants", title: "Dental Implants Consultation", duration: "60 mins", popular: false },
-  { id: "porcelain-veneers", title: "Porcelain Veneers & Smile Design", duration: "60 mins", popular: false },
-  { id: "root-canal", title: "Root Canal Therapy", duration: "60 mins", popular: false },
-  { id: "wisdom-teeth", title: "Wisdom Teeth & Extractions", duration: "45 mins", popular: false },
-  { id: "pediatric-dentistry", title: "Pediatric Dentistry (Kids)", duration: "30 mins", popular: false },
-  { id: "crowns-bridges", title: "Crowns & Bridges", duration: "60 mins", popular: false },
-  { id: "dentures", title: "Dentures & Denture Implants", duration: "45 mins", popular: false },
-  { id: "oral-cancer-screening", title: "Comprehensive Oral Health Exam", duration: "30 mins", popular: false },
+  { id: "teeth-cleaning", title: "Teeth Cleaning & Hygiene", duration: "45 mins" },
+  { id: "emergency-care", title: "Emergency Dental Care", duration: "Same-Day Priority" },
+  { id: "teeth-whitening", title: "Professional Teeth Whitening", duration: "60 mins" },
+  { id: "invisalign", title: "Invisalign & Clear Aligners", duration: "45 mins" },
+  { id: "dental-implants", title: "Dental Implants Consultation", duration: "60 mins" },
+  { id: "porcelain-veneers", title: "Porcelain Veneers & Smile Design", duration: "60 mins" },
+  { id: "root-canal", title: "Root Canal Therapy", duration: "60 mins" },
+  { id: "wisdom-teeth", title: "Wisdom Teeth & Extractions", duration: "45 mins" },
+  { id: "pediatric-dentistry", title: "Pediatric Dentistry (Kids)", duration: "30 mins" },
+  { id: "crowns-bridges", title: "Crowns & Bridges", duration: "60 mins" },
+  { id: "dentures", title: "Dentures & Denture Implants", duration: "45 mins" },
+  { id: "oral-cancer-screening", title: "Comprehensive Oral Health Exam", duration: "30 mins" },
 ];
 
 const POPULAR_QUICK_PICKS = [
@@ -52,18 +54,6 @@ const POPULAR_QUICK_PICKS = [
   "Emergency Dental Care",
   "Professional Teeth Whitening",
   "Invisalign & Clear Aligners",
-];
-
-const INSURANCE_PROVIDERS = [
-  "Sun Life Financial",
-  "Manulife",
-  "Canada Life / Great-West",
-  "Green Shield Canada (GSC)",
-  "Blue Cross",
-  "Canadian Dental Care Plan (CDCP)",
-  "Desjardins Insurance",
-  "Other Direct-Billing Insurance",
-  "Self-Pay / Non-Insured",
 ];
 
 // Helper: Convert time slot to 24h
@@ -155,7 +145,7 @@ export default function BookingModal({
 
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
-  // Form State
+  // Form State (Insurance completely removed as requested)
   const [formData, setFormData] = useState({
     service: initialService || "Teeth Cleaning & Hygiene",
     doctorPreference: "Any Available Specialist",
@@ -165,8 +155,6 @@ export default function BookingModal({
     lastName: "",
     phone: "",
     email: "",
-    hasInsurance: false,
-    insuranceProvider: "Sun Life Financial",
     notes: "",
   });
 
@@ -176,6 +164,18 @@ export default function BookingModal({
   const [error, setError] = useState<string | null>(null);
   const [bookingRefId, setBookingRefId] = useState("");
 
+  // Returning Patient OTP Verification State
+  const [lookupEmail, setLookupEmail] = useState("");
+  const [isSendingOtp, setIsSendingOtp] = useState(false);
+  const [isOtpModalOpen, setIsOtpModalOpen] = useState(false);
+  const [otpDigits, setOtpDigits] = useState<string[]>(["", "", "", "", "", ""]);
+  const [isVerifyingOtp, setIsVerifyingOtp] = useState(false);
+  const [otpError, setOtpError] = useState<string | null>(null);
+  const [isVerified, setIsVerified] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
+
   // Sync initial service
   useEffect(() => {
     if (initialService) {
@@ -183,29 +183,23 @@ export default function BookingModal({
     }
   }, [initialService]);
 
-  // Reset steps on open
+  // Reset on open
   useEffect(() => {
     if (isOpen) {
       setStep(1);
       setError(null);
-      // Auto-fill from cached profile if present
-      try {
-        const cached = localStorage.getItem("vantage_patient_profile");
-        if (cached) {
-          const p = JSON.parse(cached);
-          setFormData((prev) => ({
-            ...prev,
-            firstName: p.firstName || prev.firstName,
-            lastName: p.lastName || prev.lastName,
-            phone: p.phone || prev.phone,
-            email: p.email || prev.email,
-            hasInsurance: Boolean(p.insuranceProvider),
-            insuranceProvider: p.insuranceProvider || prev.insuranceProvider,
-          }));
-        }
-      } catch {}
+      setOtpError(null);
     }
   }, [isOpen]);
+
+  // Resend cooldown timer
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldown((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
 
   // Subscribe to live doctors & time slots
   useEffect(() => {
@@ -235,13 +229,125 @@ export default function BookingModal({
   // Keyboard escape
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isOpen) {
-        onClose();
+      if (e.key === "Escape") {
+        if (isOtpModalOpen) {
+          setIsOtpModalOpen(false);
+        } else if (isOpen) {
+          onClose();
+        }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, isOtpModalOpen, onClose]);
+
+  // 1. Send 6-digit OTP code to the patient's Gmail / email
+  const handleSendOtp = async (emailInput?: string) => {
+    const targetEmail = (emailInput || lookupEmail || formData.email).trim().toLowerCase();
+    if (!targetEmail || !targetEmail.includes("@")) {
+      setError("Please enter a valid email address to send your verification code.");
+      return;
+    }
+
+    setIsSendingOtp(true);
+    setError(null);
+    setOtpError(null);
+
+    try {
+      const res = await fetch("/api/patients/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: targetEmail }),
+      });
+
+      const data = await res.json();
+
+      if (data.success || data.found) {
+        setOtpDigits(["", "", "", "", "", ""]);
+        setResendCooldown(45);
+        setIsOtpModalOpen(true);
+        setTimeout(() => {
+          otpInputRefs.current[0]?.focus();
+        }, 150);
+      } else {
+        setError(data.message || data.error || "No previous records found for this email. You can fill details manually.");
+      }
+    } catch (err) {
+      console.warn("OTP dispatch error:", err);
+      setError("Unable to reach verification service. Please enter your details manually.");
+    } finally {
+      setIsSendingOtp(false);
+    }
+  };
+
+  // 2. OTP Input Handler
+  const handleOtpChange = (index: number, val: string) => {
+    const clean = val.replace(/\D/g, "");
+    if (!clean && val !== "") return;
+
+    const newDigits = [...otpDigits];
+    newDigits[index] = clean ? clean[clean.length - 1] : "";
+    setOtpDigits(newDigits);
+
+    if (clean && index < 5) {
+      otpInputRefs.current[index + 1]?.focus();
+    }
+  };
+
+  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Backspace" && !otpDigits[index] && index > 0) {
+      otpInputRefs.current[index - 1]?.focus();
+    }
+  };
+
+  // 3. Verify OTP & Auto-fill details
+  const handleVerifyOtp = async () => {
+    const fullOtp = otpDigits.join("").trim();
+    if (fullOtp.length < 6) {
+      setOtpError("Please enter all 6 digits of your verification code.");
+      return;
+    }
+
+    setIsVerifyingOtp(true);
+    setOtpError(null);
+
+    const emailToSearch = (lookupEmail || formData.email).trim().toLowerCase();
+
+    try {
+      const res = await fetch("/api/patients/verify-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: emailToSearch, otp: fullOtp }),
+      });
+
+      const data = await res.json();
+
+      if (data.verified && data.patient) {
+        const p = data.patient;
+        const resolvedFirst = p.firstName || (p.name ? p.name.split(" ")[0] : "");
+        const resolvedLast = p.lastName || (p.name ? p.name.split(" ").slice(1).join(" ") : "");
+
+        setFormData((prev) => ({
+          ...prev,
+          firstName: resolvedFirst || prev.firstName,
+          lastName: resolvedLast || prev.lastName,
+          phone: p.phone || prev.phone,
+          email: p.email || emailToSearch,
+        }));
+
+        setIsVerified(true);
+        setIsOtpModalOpen(false);
+        setStep(3); // Take them straight to details if they triggered it from step 1
+      } else {
+        setOtpError(data.error || "Incorrect verification code. Please check your Gmail.");
+      }
+    } catch (err) {
+      console.error("Verification error:", err);
+      setOtpError("Unable to verify code right now. Please check your connection.");
+    } finally {
+      setIsVerifyingOtp(false);
+    }
+  };
 
   const validateStep = (currentStep: number) => {
     setError(null);
@@ -278,7 +384,7 @@ export default function BookingModal({
     setError(null);
 
     if (!formData.firstName.trim() || !formData.phone.trim() || !formData.email.trim()) {
-      setError("Please fill in your name, telephone number, and email.");
+      setError("Please fill in your name, phone number, and email.");
       return;
     }
 
@@ -298,7 +404,6 @@ export default function BookingModal({
             name: fullPatientName,
             phone: formData.phone.trim(),
             email: formData.email.trim(),
-            insuranceProvider: formData.hasInsurance ? formData.insuranceProvider : "",
           })
         );
       } catch {}
@@ -314,7 +419,6 @@ export default function BookingModal({
         assignedDoctor: formData.doctorPreference,
         preferredDate: formData.preferredDate,
         preferredTime: formData.preferredTime,
-        insuranceProvider: formData.hasInsurance ? formData.insuranceProvider : undefined,
         notes: formData.notes.trim() || undefined,
       });
 
@@ -335,7 +439,6 @@ export default function BookingModal({
             preferredDate: formData.preferredDate,
             preferredTime: formData.preferredTime,
             preferredTimeSlot: formData.preferredTime,
-            insuranceProvider: formData.hasInsurance ? formData.insuranceProvider : undefined,
             notes: formData.notes.trim() || undefined,
           }),
         });
@@ -499,8 +602,34 @@ export default function BookingModal({
                 </select>
               </div>
 
+              {/* Returning Patient Auto-fill Shortcut */}
+              <div className="pt-2 border-t border-slate-100">
+                {!isVerified ? (
+                  <div className="flex items-center justify-between text-xs text-slate-600 bg-slate-50/70 p-3 rounded-2xl border border-slate-200/80">
+                    <div className="flex items-center gap-2">
+                      <KeyRound className="w-4 h-4 text-[#1E5AFF] shrink-0" />
+                      <span>Already a patient? Auto-fill with a 6-digit code</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setStep(3);
+                      }}
+                      className="text-[#1E5AFF] font-semibold hover:underline cursor-pointer text-xs shrink-0"
+                    >
+                      Enter Email →
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700 bg-emerald-50/80 p-2.5 rounded-xl border border-emerald-200">
+                    <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Patient details verified &amp; auto-filled!</span>
+                  </div>
+                )}
+              </div>
+
               {/* Bottom Action */}
-              <div className="pt-3 flex justify-end">
+              <div className="pt-2 flex justify-end">
                 <button
                   type="button"
                   onClick={nextStep}
@@ -649,6 +778,60 @@ export default function BookingModal({
           {/* ================= STEP 3: PATIENT INFORMATION ================= */}
           {step === 3 && (
             <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Returning Patient Email Lookup Banner */}
+              {!isVerified ? (
+                <div className="p-3.5 rounded-2xl bg-blue-50/70 border border-blue-200/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-900 flex items-center gap-1.5">
+                      <KeyRound className="w-3.5 h-3.5 text-[#1E5AFF]" />
+                      <span>Returning Patient? Auto-fill with OTP</span>
+                    </span>
+                    <span className="text-[10px] text-slate-500">6-digit code via Gmail</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Mail className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
+                      <input
+                        type="email"
+                        value={lookupEmail}
+                        onChange={(e) => setLookupEmail(e.target.value)}
+                        placeholder="Enter past appointment email..."
+                        className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs text-slate-800 focus:outline-none focus:border-[#1E5AFF]"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleSendOtp(lookupEmail)}
+                      disabled={isSendingOtp || !lookupEmail.trim()}
+                      className="px-3.5 py-1.5 rounded-xl bg-[#1E5AFF] hover:bg-[#1548CC] text-white text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer flex items-center gap-1 shrink-0"
+                    >
+                      {isSendingOtp ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <span>Send Code</span>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-3 rounded-2xl bg-emerald-50/80 border border-emerald-200 text-xs text-emerald-800 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Check className="w-4 h-4 text-emerald-600 shrink-0 stroke-[3]" />
+                    <span>
+                      Details auto-filled for <strong>{formData.firstName} {formData.lastName}</strong> ({formData.email})
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsVerified(false)}
+                    className="text-xs text-emerald-700 underline font-medium cursor-pointer"
+                  >
+                    Change
+                  </button>
+                </div>
+              )}
+
+              {/* Name Fields */}
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="block text-xs font-semibold text-slate-700">
@@ -679,6 +862,7 @@ export default function BookingModal({
                 </div>
               </div>
 
+              {/* Phone & Email Fields */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
                   <label className="block text-xs font-semibold text-slate-700">
@@ -715,34 +899,7 @@ export default function BookingModal({
                 </div>
               </div>
 
-              {/* Direct Billing Insurance Checkbox */}
-              <div className="p-3.5 rounded-2xl bg-slate-50/80 border border-slate-200/80 space-y-2">
-                <label className="flex items-center gap-2 text-xs font-medium text-slate-700 cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    checked={formData.hasInsurance}
-                    onChange={(e) => setFormData({ ...formData, hasInsurance: e.target.checked })}
-                    className="w-4 h-4 rounded text-[#1E5AFF] focus:ring-[#1E5AFF]"
-                  />
-                  <span>I have dental insurance (We direct bill to major providers)</span>
-                </label>
-
-                {formData.hasInsurance && (
-                  <select
-                    value={formData.insuranceProvider}
-                    onChange={(e) => setFormData({ ...formData, insuranceProvider: e.target.value })}
-                    className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs text-slate-700 focus:outline-none focus:border-[#1E5AFF]"
-                  >
-                    {INSURANCE_PROVIDERS.map((ins) => (
-                      <option key={ins} value={ins}>
-                        {ins}
-                      </option>
-                    ))}
-                  </select>
-                )}
-              </div>
-
-              {/* Notes */}
+              {/* Notes / Symptoms (Optional) */}
               <div className="space-y-1">
                 <label className="block text-xs font-medium text-slate-600">
                   Notes or Symptoms (Optional)
@@ -885,6 +1042,105 @@ export default function BookingModal({
           )}
         </div>
       </motion.div>
+
+      {/* ================= 6-DIGIT OTP VERIFICATION POPUP ================= */}
+      <AnimatePresence>
+        {isOtpModalOpen && (
+          <div className="fixed inset-0 z-60 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsOtpModalOpen(false)}
+              className="absolute inset-0 bg-slate-900/60 backdrop-blur-xs"
+            />
+
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 8 }}
+              transition={{ duration: 0.16 }}
+              className="relative w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl border border-slate-200 z-10 space-y-4 text-center text-slate-800"
+            >
+              <div className="w-11 h-11 rounded-2xl bg-blue-50 text-[#1E5AFF] mx-auto flex items-center justify-center">
+                <Lock className="w-5 h-5" />
+              </div>
+
+              <div className="space-y-1">
+                <h3 className="text-base font-semibold text-slate-900">
+                  Verify Your Email
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Enter the 6-digit code sent to <strong className="text-slate-800">{lookupEmail || formData.email}</strong>
+                </p>
+              </div>
+
+              {otpError && (
+                <div className="p-2.5 rounded-xl bg-rose-50 text-rose-700 text-xs">
+                  {otpError}
+                </div>
+              )}
+
+              {/* 6 Digit Inputs */}
+              <div className="flex justify-center gap-1.5 py-1">
+                {otpDigits.map((digit, idx) => (
+                  <input
+                    key={idx}
+                    ref={(el) => {
+                      otpInputRefs.current[idx] = el;
+                    }}
+                    type="text"
+                    maxLength={1}
+                    inputMode="numeric"
+                    value={digit}
+                    onChange={(e) => handleOtpChange(idx, e.target.value)}
+                    onKeyDown={(e) => handleOtpKeyDown(idx, e)}
+                    className="w-10 h-11 text-center text-base font-bold rounded-xl border border-slate-300 focus:border-[#1E5AFF] focus:ring-2 focus:ring-[#1E5AFF]/20 focus:outline-none bg-slate-50/50"
+                  />
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={handleVerifyOtp}
+                disabled={isVerifyingOtp || otpDigits.join("").length < 6}
+                className="w-full py-2.5 rounded-xl bg-[#1E5AFF] hover:bg-[#1548CC] text-white text-xs font-semibold transition-all disabled:opacity-50 cursor-pointer shadow-xs flex items-center justify-center gap-1.5"
+              >
+                {isVerifyingOtp ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Verifying...</span>
+                  </>
+                ) : (
+                  <span>Verify &amp; Auto-Fill Details</span>
+                )}
+              </button>
+
+              <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setIsOtpModalOpen(false)}
+                  className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                >
+                  Cancel
+                </button>
+
+                {resendCooldown > 0 ? (
+                  <span>Resend in {resendCooldown}s</span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => handleSendOtp()}
+                    className="text-[#1E5AFF] font-semibold hover:underline cursor-pointer"
+                  >
+                    Resend Code
+                  </button>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
