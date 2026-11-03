@@ -1463,6 +1463,8 @@ async function startServer() {
 
   // Always serve static files in public/assets (such as patient PDF forms and logos)
   app.use('/assets', express.static(path.join(publicPath, 'assets')));
+  // Serve /src/assets so that components referencing /src/assets/images work reliably in production
+  app.use('/src/assets', express.static(path.join(process.cwd(), 'src', 'assets')));
 
   if (isDev) {
     const { createServer } = await import('vite');
