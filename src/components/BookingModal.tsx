@@ -4,7 +4,6 @@ import {
   X,
   Calendar,
   Phone,
-  MapPin,
   CheckCircle2,
   Clock,
   AlertCircle,
@@ -21,7 +20,9 @@ import {
   KeyRound,
   RefreshCw,
   Lock,
-  Building,
+  Sun,
+  Zap,
+  Check,
 } from "lucide-react";
 import {
   submitAppointmentRequest,
@@ -40,39 +41,104 @@ interface BookingModalProps {
   initialService?: string;
 }
 
-// 12 Standard Services + Emergency Care
+// Curated list of clinical services with category tags and icons
 const CLINICAL_SERVICES = [
   {
     id: "emergency-care",
     title: "Emergency Dental Care",
-    category: "Emergency",
+    category: "Urgent",
     duration: "Same-Day Priority",
-    badge: "Urgent Care",
-    description: "Acute toothache, broken or knocked-out teeth, facial swelling, or dental trauma.",
+    badge: "Urgent",
+    description: "Acute toothache, broken tooth, severe swelling, or dental trauma.",
   },
-  ...ALL_SERVICES.map((s) => ({
-    id: s.id,
-    title: s.title,
-    category: s.category.includes("Cosmetic")
-      ? "Cosmetic"
-      : s.category.includes("Preventive")
-      ? "Preventive"
-      : s.category.includes("Surgery") || s.category.includes("Extraction")
-      ? "Surgical"
-      : "Restorative",
-    duration:
-      s.id === "teeth-cleaning"
-        ? "45 mins"
-        : s.id === "oral-cancer-screening"
-        ? "20 mins"
-        : "60 mins",
-    badge: s.category.includes("Cosmetic")
-      ? "Aesthetic"
-      : s.category.includes("Preventive")
-      ? "Routine Care"
-      : "Clinical Treatment",
-    description: s.description,
-  })),
+  {
+    id: "teeth-cleaning",
+    title: "Teeth Cleaning & Hygiene",
+    category: "Routine",
+    duration: "45 mins",
+    badge: "Most Popular",
+    description: "Comprehensive exam, gentle scaling, tartar removal, and fluoride polish.",
+  },
+  {
+    id: "invisalign",
+    title: "Invisalign & Clear Aligners",
+    category: "Cosmetic",
+    duration: "45 mins",
+    badge: "Aesthetic",
+    description: "Virtually invisible orthodontic aligners for teeth straightening.",
+  },
+  {
+    id: "teeth-whitening",
+    title: "Professional Teeth Whitening",
+    category: "Cosmetic",
+    duration: "60 mins",
+    badge: "Fast Results",
+    description: "In-office laser whitening & custom take-home whitening trays.",
+  },
+  {
+    id: "dental-implants",
+    title: "Dental Implants",
+    category: "Restorative",
+    duration: "60 mins",
+    badge: "Permanent",
+    description: "Titanium tooth root replacement for lifelong crowns or bridges.",
+  },
+  {
+    id: "porcelain-veneers",
+    title: "Porcelain Veneers",
+    category: "Cosmetic",
+    duration: "60 mins",
+    badge: "Smile Design",
+    description: "Ultra-thin custom porcelain shells for a flawless smile makeover.",
+  },
+  {
+    id: "root-canal",
+    title: "Root Canal Therapy",
+    category: "Restorative",
+    duration: "60 mins",
+    badge: "Pain Relief",
+    description: "Gentle nerve infection treatment to save and restore your natural tooth.",
+  },
+  {
+    id: "wisdom-teeth",
+    title: "Wisdom Teeth & Extractions",
+    category: "Surgical",
+    duration: "45 mins",
+    badge: "Comfort Care",
+    description: "Safe, painless extractions with advanced local sedation.",
+  },
+  {
+    id: "pediatric-dentistry",
+    title: "Pediatric Dentistry (Kids)",
+    category: "Routine",
+    duration: "30 mins",
+    badge: "Family Care",
+    description: "Gentle, welcoming dental visits tailored for children and teens.",
+  },
+  {
+    id: "crowns-bridges",
+    title: "Dental Crowns & Bridges",
+    category: "Restorative",
+    duration: "60 mins",
+    badge: "Strengthening",
+    description: "Durable ceramic caps to restore damaged or missing teeth.",
+  },
+  {
+    id: "dentures",
+    title: "Dentures & Implant Dentures",
+    category: "Restorative",
+    duration: "45 mins",
+    badge: "Custom Fit",
+    description: "Full, partial, and implant-stabilized natural dentures.",
+  },
+  {
+    id: "oral-cancer-screening",
+    title: "Oral Cancer & Health Exam",
+    category: "Routine",
+    duration: "20 mins",
+    badge: "Preventive",
+    description: "Thorough tissue exam & digital imaging for preventive wellness.",
+  },
 ];
 
 const MAJOR_INSURANCE_PROVIDERS = [
@@ -221,7 +287,7 @@ export default function BookingModal({
     lastName: "",
     phone: "",
     email: "",
-    service: initialService || "Emergency Dental Care",
+    service: initialService || "Teeth Cleaning & Hygiene",
     doctorPreference: "First Available Specialist",
     preferredDate: tomorrowStr,
     preferredTime: "09:00 AM",
@@ -232,9 +298,9 @@ export default function BookingModal({
   });
 
   // Returning Patient & OTP State
+  const [showAutoFillBox, setShowAutoFillBox] = useState(false);
   const [lookupEmail, setLookupEmail] = useState("");
   const [isLookingUp, setIsLookingUp] = useState(false);
-  const [lookupStatus, setLookupStatus] = useState<"idle" | "success" | "not_found">("idle");
   const [autoFilled, setAutoFilled] = useState(false);
 
   // OTP Verification Modal Popup
@@ -304,11 +370,10 @@ export default function BookingModal({
   const filteredServices = CLINICAL_SERVICES.filter((svc) => {
     const matchesCategory =
       categoryFilter === "All" ||
-      (categoryFilter === "Preventive" && svc.category === "Preventive") ||
+      (categoryFilter === "Routine" && svc.category === "Routine") ||
       (categoryFilter === "Restorative" && svc.category === "Restorative") ||
       (categoryFilter === "Cosmetic" && svc.category === "Cosmetic") ||
-      (categoryFilter === "Surgical" && svc.category === "Surgical") ||
-      (categoryFilter === "Emergency" && svc.category === "Emergency");
+      (categoryFilter === "Urgent" && svc.category === "Urgent");
 
     const matchesSearch =
       svc.title.toLowerCase().includes(serviceSearch.toLowerCase()) ||
@@ -340,7 +405,7 @@ export default function BookingModal({
     if (step === 3) setStep(2);
   };
 
-  // 1. Dispatch OTP to Real Gmail
+  // Dispatch OTP to Email
   const handleInitiateOtpLookup = async (targetEmail?: string) => {
     const emailToSearch = (targetEmail || lookupEmail || formData.email).trim().toLowerCase();
     if (!emailToSearch || !emailToSearch.includes("@")) {
@@ -353,7 +418,6 @@ export default function BookingModal({
     setOtpError(null);
 
     try {
-      // Find matching record in Firestore appointments or local cache to pass as hint
       const firestoreMatch = liveAppointments.find(
         (a) => String(a.email || "").trim().toLowerCase() === emailToSearch
       );
@@ -383,14 +447,12 @@ export default function BookingModal({
         setOtpDigits(["", "", "", "", "", ""]);
         setResendCooldown(45);
         setIsOtpOpen(true);
-        setLookupStatus("idle");
 
         setTimeout(() => {
           otpInputRefs.current[0]?.focus();
         }, 150);
       } else {
-        setLookupStatus("not_found");
-        setSubmitError(data.message || "No prior records found for this email. Please register as a new patient.");
+        setSubmitError(data.message || "No prior records found for this email. You can fill details manually in step 3.");
       }
     } catch (err) {
       console.warn("OTP dispatch network error:", err);
@@ -400,7 +462,7 @@ export default function BookingModal({
     }
   };
 
-  // 2. OTP Input Handler
+  // OTP Input Handler
   const handleOtpChange = (index: number, val: string) => {
     const clean = val.replace(/\D/g, "");
     if (!clean && val !== "") return;
@@ -420,7 +482,33 @@ export default function BookingModal({
     }
   };
 
-  // 3. Verify OTP & Auto-Fill Patient Blank Details
+  const applyPatientData = useCallback(
+    (patientData: any, emailToSearch: string) => {
+      const resolvedFirst =
+        patientData.firstName || (patientData.name ? patientData.name.split(" ")[0] : "");
+      const resolvedLast =
+        patientData.lastName || (patientData.name ? patientData.name.split(" ").slice(1).join(" ") : "");
+
+      setFormData((prev) => ({
+        ...prev,
+        firstName: resolvedFirst || prev.firstName,
+        lastName: resolvedLast || prev.lastName,
+        phone: patientData?.phone || prev.phone,
+        email: patientData?.email || emailToSearch,
+        isNewPatient: false,
+        ...(patientData?.insuranceProvider
+          ? { hasInsurance: true, insuranceProvider: patientData.insuranceProvider }
+          : {}),
+      }));
+
+      setLookupEmail(patientData.email || emailToSearch);
+      setAutoFilled(true);
+      setShowAutoFillBox(false);
+    },
+    []
+  );
+
+  // Verify OTP
   const handleVerifyOtp = async () => {
     const fullOtp = otpDigits.join("").trim();
     if (fullOtp.length < 6) {
@@ -446,7 +534,7 @@ export default function BookingModal({
         applyPatientData(data.patient, emailToSearch);
         setIsOtpOpen(false);
       } else {
-        setOtpError(data.error || "Incorrect verification code. Please check your Gmail.");
+        setOtpError(data.error || "Incorrect verification code. Please check your inbox.");
       }
     } catch (err) {
       console.error("Verification error:", err);
@@ -456,40 +544,14 @@ export default function BookingModal({
     }
   };
 
-  const applyPatientData = useCallback(
-    (patientData: any, emailToSearch: string) => {
-      const resolvedFirst =
-        patientData.firstName || (patientData.name ? patientData.name.split(" ")[0] : "");
-      const resolvedLast =
-        patientData.lastName || (patientData.name ? patientData.name.split(" ").slice(1).join(" ") : "");
-
-      setFormData((prev) => ({
-        ...prev,
-        firstName: resolvedFirst || prev.firstName,
-        lastName: resolvedLast || prev.lastName,
-        phone: patientData?.phone || prev.phone,
-        email: patientData?.email || emailToSearch,
-        isNewPatient: false,
-        ...(patientData?.insuranceProvider
-          ? { hasInsurance: true, insuranceProvider: patientData.insuranceProvider }
-          : {}),
-      }));
-
-      setLookupEmail(patientData.email || emailToSearch);
-      setLookupStatus("success");
-      setAutoFilled(true);
-    },
-    []
-  );
-
-  // 4. Submit Appointment
+  // Submit Appointment
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitError(null);
 
     const fullPatientName = `${formData.firstName.trim()} ${formData.lastName.trim()}`.trim();
     if (!formData.firstName.trim() || !formData.phone.trim() || !formData.email.trim()) {
-      setSubmitError("Please provide your full name, telephone number, and email address.");
+      setSubmitError("Please provide your full name, phone number, and email address.");
       return;
     }
 
@@ -578,66 +640,57 @@ export default function BookingModal({
 
       {/* Main Dialog */}
       <motion.div
-        initial={{ opacity: 0, scale: 0.96, y: 12 }}
+        initial={{ opacity: 0, scale: 0.96, y: 14 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.96, y: 12 }}
-        transition={{ duration: 0.22, ease: "easeOut" }}
-        className="relative w-full max-w-2xl bg-white rounded-3xl shadow-2xl border border-[#E2E8F0] overflow-hidden z-10 flex flex-col my-auto max-h-[92vh]"
+        exit={{ opacity: 0, scale: 0.96, y: 14 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+        className="relative w-full max-w-xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden z-10 flex flex-col my-auto max-h-[92vh]"
       >
         {/* Header Bar */}
-        <div className="px-6 py-5 bg-[#060C16] text-white flex items-center justify-between shrink-0 border-b border-white/10">
+        <div className="px-5 sm:px-6 py-4 sm:py-5 bg-gradient-to-r from-[#060C16] to-[#0D1B2A] text-white flex items-center justify-between shrink-0 border-b border-white/10">
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-[#1E5AFF] tracking-wider uppercase">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#4E8FFF] uppercase tracking-wider">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                 First Avenue Family Dentistry
               </span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-[#8E8E93]">
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-white/70">
                 St. Thomas, ON
               </span>
             </div>
-            <h2 className="text-xl font-bold tracking-tight text-white mt-0.5">
-              Book Your Dental Appointment
+            <h2 className="text-lg sm:text-xl font-bold tracking-tight text-white mt-0.5">
+              Book Your Visit in 3 Easy Steps
             </h2>
-            <p className="text-xs text-[#8E8E93] mt-0.5 flex items-center gap-2">
-              <span>(519) 207-6890</span>
-              <span>•</span>
-              <span>308 Wellington Street</span>
-            </p>
           </div>
 
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors cursor-pointer"
+            className="p-2 rounded-full bg-white/10 text-white/80 hover:text-white hover:bg-white/20 transition-colors cursor-pointer"
             aria-label="Close booking modal"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Stepper Progress Bar (Only during steps 1-3) */}
+        {/* Minimal Progress Bar (Steps 1-3) */}
         {step < 4 && (
-          <div className="px-6 py-3 bg-[#F8FAFC] border-b border-[#E2E8F0] shrink-0">
-            <div className="flex items-center justify-between max-w-lg mx-auto">
-              {/* Step 1 */}
-              <div className="flex items-center gap-2">
-                <div
-                  className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
-                    step >= 1 ? "bg-[#1E5AFF] text-white" : "bg-[#E2E8F0] text-[#64748B]"
+          <div className="px-6 py-3 bg-slate-50 border-b border-slate-200/80 shrink-0">
+            <div className="flex items-center justify-between max-w-sm mx-auto text-xs font-semibold">
+              <div className="flex items-center gap-1.5">
+                <span
+                  className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold ${
+                    step >= 1 ? "bg-[#1E5AFF] text-white" : "bg-slate-200 text-slate-500"
                   }`}
                 >
                   1
-                </div>
-                <span
-                  className={`text-xs font-semibold ${
-                    step === 1 ? "text-[#060C16]" : "text-[#64748B]"
-                  }`}
-                >
-                  Treatment &amp; Doctor
+                </span>
+                <span className={step === 1 ? "text-[#060C16] font-bold" : "text-slate-500"}>
+                  Treatment
                 </span>
               </div>
 
-              <div className="flex-1 h-[2px] bg-[#E2E8F0] mx-3">
+              <div className="w-8 sm:w-14 h-[2px] bg-slate-200">
                 <div
                   className={`h-full bg-[#1E5AFF] transition-all duration-300 ${
                     step >= 2 ? "w-full" : "w-0"
@@ -645,25 +698,20 @@ export default function BookingModal({
                 />
               </div>
 
-              {/* Step 2 */}
-              <div className="flex items-center gap-2">
-                <div
-                  className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
-                    step >= 2 ? "bg-[#1E5AFF] text-white" : "bg-[#E2E8F0] text-[#64748B]"
+              <div className="flex items-center gap-1.5">
+                <span
+                  className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold ${
+                    step >= 2 ? "bg-[#1E5AFF] text-white" : "bg-slate-200 text-slate-500"
                   }`}
                 >
                   2
-                </div>
-                <span
-                  className={`text-xs font-semibold ${
-                    step === 2 ? "text-[#060C16]" : "text-[#64748B]"
-                  }`}
-                >
-                  Date &amp; Time
+                </span>
+                <span className={step === 2 ? "text-[#060C16] font-bold" : "text-slate-500"}>
+                  Schedule
                 </span>
               </div>
 
-              <div className="flex-1 h-[2px] bg-[#E2E8F0] mx-3">
+              <div className="w-8 sm:w-14 h-[2px] bg-slate-200">
                 <div
                   className={`h-full bg-[#1E5AFF] transition-all duration-300 ${
                     step >= 3 ? "w-full" : "w-0"
@@ -671,21 +719,16 @@ export default function BookingModal({
                 />
               </div>
 
-              {/* Step 3 */}
-              <div className="flex items-center gap-2">
-                <div
-                  className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold transition-all ${
-                    step === 3 ? "bg-[#1E5AFF] text-white" : "bg-[#E2E8F0] text-[#64748B]"
+              <div className="flex items-center gap-1.5">
+                <span
+                  className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-bold ${
+                    step >= 3 ? "bg-[#1E5AFF] text-white" : "bg-slate-200 text-slate-500"
                   }`}
                 >
                   3
-                </div>
-                <span
-                  className={`text-xs font-semibold ${
-                    step === 3 ? "text-[#060C16]" : "text-[#64748B]"
-                  }`}
-                >
-                  Patient Details
+                </span>
+                <span className={step === 3 ? "text-[#060C16] font-bold" : "text-slate-500"}>
+                  Patient
                 </span>
               </div>
             </div>
@@ -693,12 +736,12 @@ export default function BookingModal({
         )}
 
         {/* Modal Scrollable Body */}
-        <div className="p-6 sm:p-7 overflow-y-auto space-y-6 flex-1">
+        <div className="p-5 sm:p-6 overflow-y-auto space-y-5 flex-1">
           {submitError && (
-            <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2.5">
+            <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2.5">
               <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-600" />
               <div>
-                <p className="font-bold">Required Information</p>
+                <p className="font-bold">Please check:</p>
                 <p className="text-[11px] mt-0.5">{submitError}</p>
               </div>
             </div>
@@ -706,242 +749,221 @@ export default function BookingModal({
 
           {/* ================= STEP 1: SERVICE & SPECIALIST ================= */}
           {step === 1 && (
-            <div className="space-y-6">
-              {/* Patient Type Switcher */}
-              <div className="p-4 rounded-2xl bg-[#F0F5FF] border border-[#BFDBFE] space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-[#060C16] flex items-center gap-1.5">
-                    <User className="w-3.5 h-3.5 text-[#1E5AFF]" />
-                    Are you a New or Returning Patient?
-                  </span>
-                  {autoFilled && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold">
-                      <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                      Record Verified &amp; Auto-Filled
-                    </span>
-                  )}
-                </div>
-
-                <div className="grid grid-cols-2 gap-2 text-xs font-semibold">
-                  <button
-                    type="button"
-                    onClick={() => setFormData({ ...formData, isNewPatient: true })}
-                    className={`py-2 px-3 rounded-xl border text-center transition-all cursor-pointer ${
-                      formData.isNewPatient
-                        ? "bg-[#1E5AFF] text-white border-[#1E5AFF] shadow-sm"
-                        : "bg-white text-[#64748B] border-[#CBD5E1] hover:bg-[#F8FAFC]"
-                    }`}
-                  >
-                    First-Time Patient
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setFormData({ ...formData, isNewPatient: false })}
-                    className={`py-2 px-3 rounded-xl border text-center transition-all cursor-pointer ${
-                      !formData.isNewPatient
-                        ? "bg-[#1E5AFF] text-white border-[#1E5AFF] shadow-sm"
-                        : "bg-white text-[#64748B] border-[#CBD5E1] hover:bg-[#F8FAFC]"
-                    }`}
-                  >
-                    Returning Patient (Auto-Fill)
-                  </button>
-                </div>
-
-                {/* Returning Patient Email Lookup Input */}
-                {!formData.isNewPatient && !autoFilled && (
-                  <div className="pt-2 border-t border-[#BFDBFE] space-y-2">
-                    <p className="text-[11px] text-[#475569]">
-                      Enter your email address to receive a secure 6-digit verification code directly to your Gmail. Once verified, your full name, phone number, and insurance will automatically fill in.
-                    </p>
-                    <div className="flex gap-2">
-                      <div className="relative flex-1">
-                        <Mail className="w-4 h-4 text-[#94A3B8] absolute left-3 top-2.5" />
-                        <input
-                          type="email"
-                          value={lookupEmail}
-                          onChange={(e) => setLookupEmail(e.target.value)}
-                          placeholder="Enter your email address..."
-                          className="w-full pl-9 pr-3 py-2 rounded-xl border border-[#CBD5E1] bg-white text-xs text-[#060C16] focus:outline-none focus:border-[#1E5AFF]"
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleInitiateOtpLookup()}
-                        disabled={isLookingUp || !lookupEmail.trim()}
-                        className="px-4 py-2 rounded-xl bg-[#060C16] hover:bg-[#151D2A] text-white text-xs font-bold transition-colors cursor-pointer disabled:opacity-50 shrink-0 flex items-center gap-1.5"
-                      >
-                        {isLookingUp ? (
-                          <>
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                            <span>Sending OTP...</span>
-                          </>
-                        ) : (
-                          <>
-                            <KeyRound className="w-3.5 h-3.5 text-[#1E5AFF]" />
-                            <span>Verify &amp; Auto-Fill</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Dental Service Selection */}
-              <div className="space-y-3">
+            <div className="space-y-4">
+              {/* Category Pills & Search */}
+              <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label
                     htmlFor={serviceSearchId}
-                    className="block text-xs font-bold text-[#060C16] uppercase tracking-wide"
+                    className="text-xs font-bold text-[#060C16] uppercase tracking-wide flex items-center gap-1.5"
                   >
-                    1. Select Dental Service / Treatment *
+                    <Stethoscope className="w-3.5 h-3.5 text-[#1E5AFF]" />
+                    <span>Select Dental Treatment</span>
                   </label>
-                  <span className="text-[11px] text-[#64748B]">
-                    Selected: <strong className="text-[#1E5AFF]">{formData.service}</strong>
+                  <span className="text-[11px] font-semibold text-[#1E5AFF]">
+                    Selected: {formData.service}
                   </span>
                 </div>
 
-                {/* Search & Category filter */}
-                <div className="space-y-2">
-                  <div className="relative">
-                    <Search className="w-4 h-4 text-[#94A3B8] absolute left-3 top-2.5" />
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
                     <input
                       id={serviceSearchId}
                       type="text"
                       value={serviceSearch}
                       onChange={(e) => setServiceSearch(e.target.value)}
-                      placeholder="Search procedures (e.g. cleaning, crown, extraction, emergency)..."
-                      className="w-full pl-9 pr-3 py-2 rounded-xl border border-[#E2E8F0] text-xs text-[#060C16] focus:outline-none focus:border-[#1E5AFF]"
+                      placeholder="Search treatment (e.g. cleaning, whitening, filling)..."
+                      className="w-full pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 text-xs text-[#060C16] bg-slate-50/50 focus:bg-white focus:outline-none focus:border-[#1E5AFF] transition-colors"
                     />
-                  </div>
-
-                  {/* Category Filter Chips */}
-                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[11px] font-semibold text-[#64748B]">
-                    {["All", "Emergency", "Preventive", "Restorative", "Cosmetic", "Surgical"].map((cat) => (
-                      <button
-                        key={cat}
-                        type="button"
-                        onClick={() => setCategoryFilter(cat)}
-                        className={`px-3 py-1 rounded-full whitespace-nowrap transition-colors cursor-pointer ${
-                          categoryFilter === cat
-                            ? "bg-[#060C16] text-white font-bold"
-                            : "bg-[#F1F5F9] text-[#64748B] hover:bg-[#E2E8F0]"
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
                   </div>
                 </div>
 
-                {/* Services List / Cards */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-56 overflow-y-auto pr-1">
-                  {filteredServices.map((svc) => {
-                    const isSelected = formData.service === svc.title;
-                    return (
-                      <button
-                        key={svc.id}
-                        type="button"
-                        onClick={() => setFormData({ ...formData, service: svc.title })}
-                        className={`p-3 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
-                          isSelected
-                            ? "bg-[#EFF6FF] border-[#1E5AFF] ring-1 ring-[#1E5AFF] shadow-xs"
-                            : "bg-white border-[#E2E8F0] hover:border-[#CBD5E1]"
-                        }`}
-                      >
-                        <div>
-                          <div className="flex items-center justify-between gap-1 mb-1">
-                            <span
-                              className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                                svc.id === "emergency-care"
-                                  ? "bg-rose-100 text-rose-700 font-bold"
-                                  : "bg-[#F1F5F9] text-[#64748B]"
-                              }`}
-                            >
-                              {svc.badge}
-                            </span>
-                            <span className="text-[10px] text-[#94A3B8]">{svc.duration}</span>
-                          </div>
-                          <span className="block font-bold text-xs text-[#060C16] leading-snug">
-                            {svc.title}
-                          </span>
-                          <p className="text-[11px] text-[#64748B] line-clamp-1 mt-0.5">
-                            {svc.description}
-                          </p>
-                        </div>
-                      </button>
-                    );
-                  })}
+                {/* Filter Chips */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[11px] font-semibold">
+                  {["All", "Routine", "Cosmetic", "Restorative", "Urgent"].map((cat) => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setCategoryFilter(cat)}
+                      className={`px-3 py-1 rounded-full whitespace-nowrap transition-all cursor-pointer ${
+                        categoryFilter === cat
+                          ? "bg-[#1E5AFF] text-white shadow-xs"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* Doctor / Specialist Selection (Synced Live with Firestore) */}
-              <div className="space-y-2 pt-2 border-t border-[#E2E8F0]">
+              {/* Service Cards Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-60 overflow-y-auto pr-1">
+                {filteredServices.map((svc) => {
+                  const isSelected = formData.service === svc.title;
+                  return (
+                    <button
+                      key={svc.id}
+                      type="button"
+                      onClick={() => setFormData({ ...formData, service: svc.title })}
+                      className={`p-3 rounded-2xl border text-left transition-all cursor-pointer relative group flex flex-col justify-between ${
+                        isSelected
+                          ? "bg-blue-50/70 border-[#1E5AFF] ring-2 ring-[#1E5AFF]/20 shadow-xs"
+                          : "bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/50"
+                      }`}
+                    >
+                      <div>
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                              svc.id === "emergency-care"
+                                ? "bg-rose-100 text-rose-700 font-bold"
+                                : isSelected
+                                ? "bg-[#1E5AFF] text-white"
+                                : "bg-slate-100 text-slate-600"
+                            }`}
+                          >
+                            {svc.badge}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-medium">
+                            {svc.duration}
+                          </span>
+                        </div>
+                        <span className="block font-bold text-xs text-[#060C16] leading-snug">
+                          {svc.title}
+                        </span>
+                        <p className="text-[11px] text-slate-500 line-clamp-1 mt-0.5">
+                          {svc.description}
+                        </p>
+                      </div>
+                      {isSelected && (
+                        <div className="absolute right-2.5 bottom-2.5 text-[#1E5AFF]">
+                          <Check className="w-3.5 h-3.5 stroke-[3]" />
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Doctor / Specialist Dropdown */}
+              <div className="space-y-1.5 pt-2 border-t border-slate-100">
                 <label className="block text-xs font-bold text-[#060C16] uppercase tracking-wide">
-                  2. Doctor / Specialist Preference
+                  Doctor Preference
                 </label>
-                <div className="relative">
-                  <select
-                    value={
-                      formData.doctorPreference === "First Available Specialist" ||
-                      liveDoctors.some((d) => d.name === formData.doctorPreference)
-                        ? formData.doctorPreference
-                        : "First Available Specialist"
-                    }
-                    onChange={(e) => setFormData({ ...formData, doctorPreference: e.target.value })}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#E2E8F0] text-xs text-[#060C16] bg-white focus:outline-none focus:border-[#1E5AFF]"
-                  >
-                    <option value="First Available Specialist">
-                      First Available Specialist (Recommended • Earliest opening)
+                <select
+                  value={
+                    formData.doctorPreference === "First Available Specialist" ||
+                    liveDoctors.some((d) => d.name === formData.doctorPreference)
+                      ? formData.doctorPreference
+                      : "First Available Specialist"
+                  }
+                  onChange={(e) => setFormData({ ...formData, doctorPreference: e.target.value })}
+                  className="w-full px-3.5 py-2 rounded-xl border border-slate-200 text-xs text-[#060C16] bg-white focus:outline-none focus:border-[#1E5AFF]"
+                >
+                  <option value="First Available Specialist">
+                    ⚡ First Available Specialist (Fastest • Recommended)
+                  </option>
+                  {liveDoctors.map((doc) => (
+                    <option key={doc.id} value={doc.name}>
+                      {doc.name} — {doc.title}
                     </option>
-                    {liveDoctors.map((doc) => (
-                      <option key={doc.id} value={doc.name}>
-                        {doc.name} — {doc.title}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <p className="text-[11px] text-[#64748B]">
-                  Choosing &ldquo;First Available Specialist&rdquo; offers the earliest schedule availability.
-                </p>
+                  ))}
+                </select>
+              </div>
+
+              {/* Optional Returning Patient Auto-Fill Hint */}
+              <div className="pt-2">
+                {!autoFilled ? (
+                  !showAutoFillBox ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowAutoFillBox(true)}
+                      className="text-[11px] font-semibold text-[#1E5AFF] hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <Zap className="w-3 h-3 text-[#1E5AFF]" />
+                      <span>Visited us before? Click to auto-fill with email code</span>
+                    </button>
+                  ) : (
+                    <div className="p-3 rounded-2xl bg-blue-50/60 border border-blue-100 space-y-2">
+                      <div className="flex items-center justify-between text-[11px] font-semibold text-[#060C16]">
+                        <span>Enter your email to receive an instant verification code:</span>
+                        <button
+                          type="button"
+                          onClick={() => setShowAutoFillBox(false)}
+                          className="text-slate-400 hover:text-slate-600 text-xs"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                      <div className="flex gap-2">
+                        <input
+                          type="email"
+                          value={lookupEmail}
+                          onChange={(e) => setLookupEmail(e.target.value)}
+                          placeholder="Your email address..."
+                          className="flex-1 px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs focus:outline-none focus:border-[#1E5AFF]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleInitiateOtpLookup()}
+                          disabled={isLookingUp || !lookupEmail.trim()}
+                          className="px-3.5 py-1.5 rounded-xl bg-[#060C16] text-white text-xs font-bold hover:bg-slate-800 transition-colors disabled:opacity-50 cursor-pointer flex items-center gap-1.5"
+                        >
+                          {isLookingUp ? (
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                          ) : (
+                            <KeyRound className="w-3 h-3 text-[#4E8FFF]" />
+                          )}
+                          <span>Send Code</span>
+                        </button>
+                      </div>
+                    </div>
+                  )
+                ) : (
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-semibold">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Your patient details have been auto-filled!</span>
+                  </div>
+                )}
               </div>
 
               {/* Bottom Step 1 Action */}
-              <div className="pt-3 flex justify-end">
+              <div className="pt-2 flex justify-end">
                 <button
                   type="button"
                   onClick={handleNextStep}
-                  className="px-6 py-2.5 rounded-xl bg-[#1E5AFF] hover:bg-[#0452FF] text-white text-xs font-bold tracking-wide transition-colors cursor-pointer shadow-sm shadow-[#1E5AFF]/25 flex items-center gap-2"
+                  className="px-6 py-2.5 rounded-xl bg-[#1E5AFF] hover:bg-[#0452FF] text-white text-xs font-bold tracking-wide transition-all cursor-pointer shadow-md shadow-[#1E5AFF]/25 flex items-center gap-2 hover:translate-x-0.5"
                 >
-                  <span>Select Date &amp; Time</span>
+                  <span>Choose Date &amp; Time</span>
                   <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
             </div>
           )}
 
-          {/* ================= STEP 2: DATE & LIVE TIME SLOTS ================= */}
+          {/* ================= STEP 2: DATE & TIME SLOTS ================= */}
           {step === 2 && (
-            <div className="space-y-6">
+            <div className="space-y-4">
               {/* Date Selection */}
-              <div className="space-y-3">
+              <div className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="block text-xs font-bold text-[#060C16] uppercase tracking-wide">
-                    Choose Appointment Date *
+                  <label className="text-xs font-bold text-[#060C16] uppercase tracking-wide flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-[#1E5AFF]" />
+                    <span>Choose Preferred Date</span>
                   </label>
                   <span className="text-xs font-semibold text-[#1E5AFF]">
                     {new Date(formData.preferredDate + "T12:00:00").toLocaleDateString("en-US", {
                       weekday: "short",
                       month: "short",
                       day: "numeric",
-                      year: "numeric",
                     })}
                   </span>
                 </div>
 
                 {/* Quick Date Presets */}
-                <div className="flex items-center gap-2 text-xs font-semibold">
+                <div className="flex items-center gap-1.5 text-xs font-semibold">
                   <button
                     type="button"
                     onClick={() =>
@@ -950,7 +972,7 @@ export default function BookingModal({
                         preferredDate: new Date(Date.now() + 86400000).toISOString().split("T")[0],
                       })
                     }
-                    className="px-3 py-1.5 rounded-xl bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#060C16] cursor-pointer"
+                    className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-[#060C16] transition-colors cursor-pointer"
                   >
                     Tomorrow
                   </button>
@@ -962,7 +984,7 @@ export default function BookingModal({
                         preferredDate: new Date(Date.now() + 172800000).toISOString().split("T")[0],
                       })
                     }
-                    className="px-3 py-1.5 rounded-xl bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#060C16] cursor-pointer"
+                    className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-[#060C16] transition-colors cursor-pointer"
                   >
                     In 2 Days
                   </button>
@@ -974,46 +996,45 @@ export default function BookingModal({
                         preferredDate: new Date(Date.now() + 7 * 86400000).toISOString().split("T")[0],
                       })
                     }
-                    className="px-3 py-1.5 rounded-xl bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#060C16] cursor-pointer"
+                    className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-[#060C16] transition-colors cursor-pointer"
                   >
                     Next Week
                   </button>
                 </div>
 
                 <div className="relative">
-                  <Calendar className="w-4 h-4 text-[#94A3B8] absolute left-3.5 top-3 pointer-events-none" />
+                  <Calendar className="w-4 h-4 text-slate-400 absolute left-3.5 top-3 pointer-events-none" />
                   <input
                     type="date"
                     min={new Date().toISOString().split("T")[0]}
                     value={formData.preferredDate}
                     onChange={(e) => setFormData({ ...formData, preferredDate: e.target.value })}
-                    className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-[#E2E8F0] text-xs text-[#060C16] bg-white focus:outline-none focus:border-[#1E5AFF]"
+                    className="w-full pl-10 pr-3.5 py-2 rounded-xl border border-slate-200 text-xs text-[#060C16] bg-white focus:outline-none focus:border-[#1E5AFF]"
                   />
                 </div>
               </div>
 
-              {/* Live Time Slots (Synced in real time with Admin Panel) */}
-              <div className="space-y-4 pt-2 border-t border-[#E2E8F0]">
+              {/* Time Slots */}
+              <div className="space-y-3 pt-2 border-t border-slate-100">
                 <div className="flex items-center justify-between">
-                  <label className="block text-xs font-bold text-[#060C16] uppercase tracking-wide">
-                    Select Available Time Slot *
+                  <label className="text-xs font-bold text-[#060C16] uppercase tracking-wide flex items-center gap-1.5">
+                    <Clock className="w-3.5 h-3.5 text-[#1E5AFF]" />
+                    <span>Select Time Slot</span>
                   </label>
-                  <span className="text-xs text-[#64748B]">
-                    Selected: <strong className="text-[#1E5AFF]">{formData.preferredTime}</strong>
+                  <span className="text-xs font-bold text-[#1E5AFF]">
+                    {formData.preferredTime}
                   </span>
                 </div>
 
-                <div className="space-y-4">
+                <div className="space-y-3 max-h-56 overflow-y-auto pr-1">
                   {liveTimeSlots.map((group) => (
-                    <div key={group.group} className="space-y-2">
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-3.5 h-3.5 text-[#1E5AFF]" />
-                        <span className="text-[11px] font-bold text-[#64748B] uppercase tracking-wide">
-                          {group.group}
-                        </span>
+                    <div key={group.group} className="space-y-1.5">
+                      <div className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 uppercase tracking-wide">
+                        <Sun className="w-3 h-3 text-amber-500" />
+                        <span>{group.group}</span>
                       </div>
 
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-1.5">
                         {group.slots.map((slot) => {
                           const isSelected = formData.preferredTime === slot;
                           return (
@@ -1021,10 +1042,10 @@ export default function BookingModal({
                               key={slot}
                               type="button"
                               onClick={() => setFormData({ ...formData, preferredTime: slot })}
-                              className={`py-2 px-3 rounded-xl border text-xs font-semibold transition-all cursor-pointer text-center ${
+                              className={`py-2 px-2 rounded-xl text-xs font-semibold transition-all cursor-pointer text-center ${
                                 isSelected
-                                  ? "bg-[#1E5AFF] text-white border-[#1E5AFF] shadow-sm shadow-[#1E5AFF]/20"
-                                  : "bg-[#F8FAFC] text-[#060C16] border-[#E2E8F0] hover:border-[#CBD5E1] hover:bg-white"
+                                  ? "bg-[#1E5AFF] text-white shadow-sm shadow-[#1E5AFF]/30 font-bold"
+                                  : "bg-slate-50 text-slate-700 border border-slate-200 hover:border-slate-300 hover:bg-white"
                               }`}
                             >
                               {slot}
@@ -1038,11 +1059,11 @@ export default function BookingModal({
               </div>
 
               {/* Navigation Buttons */}
-              <div className="pt-3 flex items-center justify-between border-t border-[#E2E8F0]">
+              <div className="pt-2 flex items-center justify-between border-t border-slate-100">
                 <button
                   type="button"
                   onClick={handlePrevStep}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-[#64748B] hover:text-[#060C16] transition-colors cursor-pointer flex items-center gap-1.5"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:text-[#060C16] transition-colors cursor-pointer flex items-center gap-1.5"
                 >
                   <ChevronLeft className="w-4 h-4" />
                   <span>Back</span>
@@ -1051,26 +1072,27 @@ export default function BookingModal({
                 <button
                   type="button"
                   onClick={handleNextStep}
-                  className="px-6 py-2.5 rounded-xl bg-[#1E5AFF] hover:bg-[#0452FF] text-white text-xs font-bold tracking-wide transition-colors cursor-pointer shadow-sm shadow-[#1E5AFF]/25 flex items-center gap-2"
+                  className="px-6 py-2.5 rounded-xl bg-[#1E5AFF] hover:bg-[#0452FF] text-white text-xs font-bold tracking-wide transition-all cursor-pointer shadow-md shadow-[#1E5AFF]/25 flex items-center gap-2 hover:translate-x-0.5"
                 >
-                  <span>Continue to Patient Details</span>
+                  <span>Continue to Details</span>
                   <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
             </div>
           )}
 
-          {/* ================= STEP 3: PATIENT INFORMATION & INSURANCE ================= */}
+          {/* ================= STEP 3: PATIENT INFORMATION ================= */}
           {step === 3 && (
-            <form onSubmit={handleSubmit} className="space-y-5">
-              <div className="p-4 rounded-2xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-3">
-                <span className="block text-xs font-bold text-[#060C16]">
-                  Patient Contact Information
-                </span>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-3">
+                <label className="text-xs font-bold text-[#060C16] uppercase tracking-wide flex items-center gap-1.5">
+                  <User className="w-3.5 h-3.5 text-[#1E5AFF]" />
+                  <span>Your Contact Information</span>
+                </label>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-2.5">
                   <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold text-[#64748B]">
+                    <label className="block text-[11px] font-semibold text-slate-600">
                       First Name *
                     </label>
                     <input
@@ -1079,12 +1101,12 @@ export default function BookingModal({
                       value={formData.firstName}
                       onChange={(e) => setFormData({ ...formData, firstName: e.target.value })}
                       placeholder="e.g. John"
-                      className="w-full px-3.5 py-2 rounded-xl border border-[#CBD5E1] bg-white text-xs text-[#060C16] focus:outline-none focus:border-[#1E5AFF]"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs text-[#060C16] focus:outline-none focus:border-[#1E5AFF]"
                     />
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold text-[#64748B]">
+                    <label className="block text-[11px] font-semibold text-slate-600">
                       Last Name *
                     </label>
                     <input
@@ -1093,74 +1115,71 @@ export default function BookingModal({
                       value={formData.lastName}
                       onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
                       placeholder="e.g. Smith"
-                      className="w-full px-3.5 py-2 rounded-xl border border-[#CBD5E1] bg-white text-xs text-[#060C16] focus:outline-none focus:border-[#1E5AFF]"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs text-[#060C16] focus:outline-none focus:border-[#1E5AFF]"
                     />
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold text-[#64748B]">
-                      Mobile Phone Number *
+                    <label className="block text-[11px] font-semibold text-slate-600">
+                      Phone Number *
                     </label>
                     <div className="relative">
-                      <Phone className="w-4 h-4 text-[#94A3B8] absolute left-3.5 top-2.5" />
+                      <Phone className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
                       <input
                         type="tel"
                         required
                         value={formData.phone}
                         onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
                         placeholder="(519) 000-0000"
-                        className="w-full pl-10 pr-3.5 py-2 rounded-xl border border-[#CBD5E1] bg-white text-xs text-[#060C16] focus:outline-none focus:border-[#1E5AFF]"
+                        className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 bg-white text-xs text-[#060C16] focus:outline-none focus:border-[#1E5AFF]"
                       />
                     </div>
                   </div>
 
                   <div className="space-y-1">
-                    <label className="block text-[11px] font-semibold text-[#64748B]">
-                      Email Address (For Calendar &amp; Confirmation) *
+                    <label className="block text-[11px] font-semibold text-slate-600">
+                      Email Address *
                     </label>
                     <div className="relative">
-                      <Mail className="w-4 h-4 text-[#94A3B8] absolute left-3.5 top-2.5" />
+                      <Mail className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5" />
                       <input
                         type="email"
                         required
                         value={formData.email}
                         onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                        placeholder="patient@example.com"
-                        className="w-full pl-10 pr-3.5 py-2 rounded-xl border border-[#CBD5E1] bg-white text-xs text-[#060C16] focus:outline-none focus:border-[#1E5AFF]"
+                        placeholder="john@example.com"
+                        className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-200 bg-white text-xs text-[#060C16] focus:outline-none focus:border-[#1E5AFF]"
                       />
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Direct Billing Insurance */}
-              <div className="p-4 rounded-2xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-3">
+              {/* Direct Billing Insurance Toggle */}
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-[#060C16] flex items-center gap-2 cursor-pointer">
+                  <label className="text-xs font-bold text-[#060C16] flex items-center gap-2 cursor-pointer select-none">
                     <input
                       type="checkbox"
                       checked={formData.hasInsurance}
                       onChange={(e) => setFormData({ ...formData, hasInsurance: e.target.checked })}
                       className="w-4 h-4 rounded text-[#1E5AFF] focus:ring-[#1E5AFF]"
                     />
-                    <span>I have Dental Insurance (Direct Billing to Major Insurers)</span>
+                    <span>I have dental insurance (Direct Electronic Billing)</span>
                   </label>
-                  <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full font-bold">
-                    Zero Hassle
+                  <span className="text-[10px] text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded-full font-bold">
+                    Direct Billing
                   </span>
                 </div>
 
                 {formData.hasInsurance && (
-                  <div className="space-y-1.5 pt-1">
-                    <label className="block text-[11px] font-semibold text-[#64748B]">
-                      Select Insurance Carrier
-                    </label>
+                  <div className="pt-1">
                     <select
                       value={formData.insuranceProvider}
                       onChange={(e) => setFormData({ ...formData, insuranceProvider: e.target.value })}
-                      className="w-full px-3.5 py-2 rounded-xl border border-[#CBD5E1] bg-white text-xs text-[#060C16] focus:outline-none focus:border-[#1E5AFF]"
+                      className="w-full px-3 py-1.5 rounded-xl border border-slate-200 bg-white text-xs text-[#060C16] focus:outline-none focus:border-[#1E5AFF]"
                     >
                       {MAJOR_INSURANCE_PROVIDERS.map((ins) => (
                         <option key={ins} value={ins}>
@@ -1172,34 +1191,34 @@ export default function BookingModal({
                 )}
               </div>
 
-              {/* Medical / Dental Notes */}
+              {/* Notes */}
               <div className="space-y-1">
-                <label className="block text-xs font-bold text-[#060C16]">
-                  Clinical Concerns or Specific Requests (Optional)
+                <label className="block text-[11px] font-semibold text-slate-600">
+                  Special requests or symptoms (Optional)
                 </label>
-                <textarea
-                  rows={2}
+                <input
+                  type="text"
                   value={formData.notes}
                   onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                  placeholder="e.g. Sensitivity in upper left molar, dental anxiety, prefer gentle care..."
-                  className="w-full px-3.5 py-2 rounded-xl border border-[#CBD5E1] text-xs text-[#060C16] focus:outline-none focus:border-[#1E5AFF]"
+                  placeholder="e.g. Tooth sensitivity, anxiety, prefer gentle touch..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs text-[#060C16] focus:outline-none focus:border-[#1E5AFF]"
                 />
               </div>
 
-              {/* Practice Reassurance Badge */}
-              <div className="p-3 rounded-xl bg-[#EFF6FF] border border-[#BFDBFE] text-[11px] text-[#1E3A8A] flex items-start gap-2">
-                <ShieldCheck className="w-4 h-4 text-[#1E5AFF] shrink-0 mt-0.5" />
+              {/* Trust Badge */}
+              <div className="p-2.5 rounded-xl bg-blue-50/70 text-[11px] text-[#1E3A8A] flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-[#1E5AFF] shrink-0" />
                 <span>
-                  No payment is required today. We electronically bill directly to your insurance company. Convenient free parking is available on-site at 308 Wellington Street, St. Thomas.
+                  No payment required today • Free parking on-site • Immediate confirmation
                 </span>
               </div>
 
               {/* Actions */}
-              <div className="pt-2 flex items-center justify-between border-t border-[#E2E8F0]">
+              <div className="pt-2 flex items-center justify-between border-t border-slate-100">
                 <button
                   type="button"
                   onClick={handlePrevStep}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-[#64748B] hover:text-[#060C16] transition-colors cursor-pointer flex items-center gap-1.5"
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 hover:text-[#060C16] transition-colors cursor-pointer flex items-center gap-1.5"
                 >
                   <ChevronLeft className="w-4 h-4" />
                   <span>Back</span>
@@ -1208,17 +1227,17 @@ export default function BookingModal({
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="px-6 py-2.5 rounded-xl bg-[#1E5AFF] hover:bg-[#0452FF] text-white text-xs font-bold tracking-wide transition-colors cursor-pointer shadow-md shadow-[#1E5AFF]/25 disabled:opacity-50 flex items-center gap-2"
+                  className="px-6 py-2.5 rounded-xl bg-[#1E5AFF] hover:bg-[#0452FF] text-white text-xs font-bold tracking-wide transition-all cursor-pointer shadow-md shadow-[#1E5AFF]/25 disabled:opacity-50 flex items-center gap-2"
                 >
                   {isSubmitting ? (
                     <>
                       <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Confirming Booking...</span>
+                      <span>Confirming...</span>
                     </>
                   ) : (
                     <>
                       <CheckCircle2 className="w-4 h-4" />
-                      <span>Confirm Appointment Request</span>
+                      <span>Confirm Appointment</span>
                     </>
                   )}
                 </button>
@@ -1226,55 +1245,51 @@ export default function BookingModal({
             </form>
           )}
 
-          {/* ================= STEP 4: CONFIRMATION & CALENDAR DOSSIER ================= */}
+          {/* ================= STEP 4: SUCCESS CONFIRMATION ================= */}
           {step === 4 && (
-            <div className="py-4 text-center space-y-6">
-              <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 mx-auto flex items-center justify-center">
-                <CheckCircle2 className="w-10 h-10" />
+            <div className="py-4 text-center space-y-5">
+              <div className="w-16 h-16 rounded-full bg-emerald-100 text-emerald-600 mx-auto flex items-center justify-center shadow-md shadow-emerald-500/20">
+                <CheckCircle2 className="w-9 h-9" />
               </div>
 
               <div className="space-y-1">
-                <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">
-                  Request Confirmed &bull; Reference #{bookingRefId}
+                <span className="text-[11px] font-bold text-emerald-600 uppercase tracking-wider">
+                  Request Confirmed &bull; #{bookingRefId}
                 </span>
-                <h3 className="text-2xl font-bold text-[#060C16] tracking-tight">
-                  We Have Received Your Appointment Request!
+                <h3 className="text-xl sm:text-2xl font-bold text-[#060C16] tracking-tight">
+                  You&apos;re All Set!
                 </h3>
-                <p className="text-xs text-[#64748B] max-w-md mx-auto">
-                  A confirmation acknowledgment has been dispatched to <strong>{formData.email}</strong>. Our reception team will review your dossier and verify your booking.
+                <p className="text-xs text-slate-600 max-w-sm mx-auto">
+                  A confirmation email has been dispatched to <strong>{formData.email}</strong>.
                 </p>
               </div>
 
               {/* Booking Summary Card */}
-              <div className="p-5 rounded-2xl bg-[#F8FAFC] border border-[#E2E8F0] max-w-md mx-auto text-left space-y-2.5 text-xs">
-                <div className="flex justify-between border-b border-[#E2E8F0] pb-2">
-                  <span className="text-[#64748B]">Patient:</span>
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 max-w-sm mx-auto text-left space-y-2 text-xs">
+                <div className="flex justify-between border-b border-slate-200/60 pb-1.5">
+                  <span className="text-slate-500">Patient:</span>
                   <strong className="text-[#060C16]">
                     {formData.firstName} {formData.lastName}
                   </strong>
                 </div>
-                <div className="flex justify-between border-b border-[#E2E8F0] pb-2">
-                  <span className="text-[#64748B]">Service:</span>
+                <div className="flex justify-between border-b border-slate-200/60 pb-1.5">
+                  <span className="text-slate-500">Treatment:</span>
                   <strong className="text-[#1E5AFF]">{formData.service}</strong>
                 </div>
-                <div className="flex justify-between border-b border-[#E2E8F0] pb-2">
-                  <span className="text-[#64748B]">Assigned Specialist:</span>
-                  <strong className="text-[#060C16]">{formData.doctorPreference}</strong>
-                </div>
-                <div className="flex justify-between border-b border-[#E2E8F0] pb-2">
-                  <span className="text-[#64748B]">Scheduled Date &amp; Time:</span>
+                <div className="flex justify-between border-b border-slate-200/60 pb-1.5">
+                  <span className="text-slate-500">Date &amp; Time:</span>
                   <strong className="text-[#060C16]">
                     {formData.preferredDate} &bull; {formData.preferredTime}
                   </strong>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-[#64748B]">Location:</span>
+                  <span className="text-slate-500">Location:</span>
                   <strong className="text-[#060C16]">308 Wellington St, St. Thomas</strong>
                 </div>
               </div>
 
               {/* Calendar Export Buttons */}
-              <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-2.5 pt-1">
                 <a
                   href={buildGoogleCalendarLink({
                     service: formData.service,
@@ -1284,10 +1299,10 @@ export default function BookingModal({
                   })}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-[#1E5AFF] hover:bg-[#0452FF] text-white text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full sm:w-auto px-4 py-2 rounded-xl bg-[#1E5AFF] hover:bg-[#0452FF] text-white text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <CalendarCheck className="w-4 h-4" />
-                  <span>Add to Google Calendar</span>
+                  <span>Google Calendar</span>
                 </a>
 
                 <button
@@ -1301,10 +1316,10 @@ export default function BookingModal({
                       patientName: `${formData.firstName} ${formData.lastName}`,
                     })
                   }
-                  className="w-full sm:w-auto px-5 py-2.5 rounded-xl bg-white border border-[#CBD5E1] hover:bg-[#F8FAFC] text-[#060C16] text-xs font-semibold transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full sm:w-auto px-4 py-2 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 text-[#060C16] text-xs font-semibold transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  <Download className="w-4 h-4 text-[#64748B]" />
-                  <span>Download .ics Invite</span>
+                  <Download className="w-4 h-4 text-slate-500" />
+                  <span>Download .ics</span>
                 </button>
               </div>
 
@@ -1313,7 +1328,7 @@ export default function BookingModal({
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-8 py-2.5 rounded-xl bg-[#060C16] hover:bg-[#151D2A] text-white text-xs font-bold transition-colors cursor-pointer"
+                  className="px-8 py-2 rounded-xl bg-[#060C16] hover:bg-slate-800 text-white text-xs font-bold transition-colors cursor-pointer"
                 >
                   Done
                 </button>
@@ -1339,32 +1354,29 @@ export default function BookingModal({
               initial={{ opacity: 0, scale: 0.95, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className="relative w-full max-w-md bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-[#E2E8F0] z-10 space-y-5 text-center"
+              className="relative w-full max-w-sm bg-white rounded-3xl p-6 shadow-2xl border border-slate-200 z-10 space-y-4 text-center"
             >
-              <div className="w-12 h-12 rounded-2xl bg-[#EFF6FF] text-[#1E5AFF] mx-auto flex items-center justify-center">
+              <div className="w-12 h-12 rounded-2xl bg-blue-50 text-[#1E5AFF] mx-auto flex items-center justify-center">
                 <Lock className="w-6 h-6" />
               </div>
 
               <div className="space-y-1">
-                <h3 className="text-lg font-bold text-[#060C16]">
-                  Patient Identity Verification
+                <h3 className="text-base font-bold text-[#060C16]">
+                  Enter 6-Digit Code
                 </h3>
-                <p className="text-xs text-[#64748B]">
-                  We sent a 6-digit one-time passcode to{" "}
-                  <strong className="text-[#060C16]">{lookupEmail || formData.email}</strong>.
-                  Please check your inbox.
+                <p className="text-xs text-slate-500">
+                  Sent to <strong className="text-[#060C16]">{lookupEmail || formData.email}</strong>
                 </p>
               </div>
 
               {otpError && (
-                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2 text-left">
-                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-600" />
-                  <span>{otpError}</span>
+                <div className="p-2 rounded-xl bg-rose-50 text-rose-700 text-xs">
+                  {otpError}
                 </div>
               )}
 
-              {/* 6 Digit Inputs */}
-              <div className="flex justify-center gap-2 sm:gap-2.5">
+              {/* 6 Digit Input Boxes */}
+              <div className="flex justify-center gap-1.5 py-1">
                 {otpDigits.map((digit, idx) => (
                   <input
                     key={idx}
@@ -1372,55 +1384,37 @@ export default function BookingModal({
                       otpInputRefs.current[idx] = el;
                     }}
                     type="text"
-                    inputMode="numeric"
                     maxLength={1}
+                    inputMode="numeric"
                     value={digit}
                     onChange={(e) => handleOtpChange(idx, e.target.value)}
                     onKeyDown={(e) => handleOtpKeyDown(idx, e)}
-                    className="w-11 h-12 text-center text-lg font-bold rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] text-[#060C16] focus:outline-none focus:border-[#1E5AFF] focus:bg-white focus:ring-1 focus:ring-[#1E5AFF] transition-all"
+                    className="w-10 h-11 text-center text-base font-bold rounded-xl border border-slate-300 focus:border-[#1E5AFF] focus:ring-2 focus:ring-[#1E5AFF]/20 focus:outline-none bg-slate-50/50"
                   />
                 ))}
               </div>
 
-              {/* Verify Button */}
-              <div className="space-y-2 pt-2">
-                <button
-                  type="button"
-                  onClick={handleVerifyOtp}
-                  disabled={isVerifyingOtp || otpDigits.join("").length < 6}
-                  className="w-full py-2.5 rounded-xl bg-[#1E5AFF] hover:bg-[#0452FF] text-white text-xs font-bold transition-colors cursor-pointer disabled:opacity-50 shadow-sm flex items-center justify-center gap-2"
-                >
-                  {isVerifyingOtp ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Verifying Passcode...</span>
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>Verify &amp; Unlock Records</span>
-                    </>
-                  )}
-                </button>
+              <button
+                type="button"
+                onClick={handleVerifyOtp}
+                disabled={isVerifyingOtp || otpDigits.join("").length < 6}
+                className="w-full py-2.5 rounded-xl bg-[#1E5AFF] hover:bg-[#0452FF] text-white text-xs font-bold transition-all disabled:opacity-50 cursor-pointer shadow-md shadow-[#1E5AFF]/25"
+              >
+                {isVerifyingOtp ? "Verifying..." : "Verify & Auto-Fill"}
+              </button>
 
-                <div className="flex items-center justify-between text-xs text-[#64748B] pt-1">
+              <div className="text-xs text-slate-500">
+                {resendCooldown > 0 ? (
+                  <span>Resend in {resendCooldown}s</span>
+                ) : (
                   <button
                     type="button"
-                    onClick={() => setIsOtpOpen(false)}
-                    className="hover:text-[#060C16] font-semibold"
-                  >
-                    Cancel
-                  </button>
-
-                  <button
-                    type="button"
-                    disabled={resendCooldown > 0}
                     onClick={() => handleInitiateOtpLookup()}
-                    className="text-[#1E5AFF] hover:underline font-semibold disabled:text-[#94A3B8] disabled:no-underline"
+                    className="text-[#1E5AFF] font-bold hover:underline cursor-pointer"
                   >
-                    {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : "Resend Code"}
+                    Resend Code
                   </button>
-                </div>
+                )}
               </div>
             </motion.div>
           </div>
