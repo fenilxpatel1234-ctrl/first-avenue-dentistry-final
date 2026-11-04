@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { AnimatePresence } from "motion/react";
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
@@ -14,7 +14,7 @@ import EmergencyPage from "./pages/EmergencyPage";
 import ServiceDetailModal, { ServiceItem } from "./components/ServiceDetailModal";
 import BookingModal from "./components/BookingModal";
 import AnimationTestSuite from "./components/AnimationTestSuite";
-import { ScrollTrigger } from "./lib/animation";
+import { ScrollTrigger, smoothScrollToTop } from "./lib/animation";
 import { AdminAuthProvider } from "./context/AdminAuthContext";
 import AdminLoginPage from "./pages/admin/AdminLoginPage";
 import AdminDashboardPage from "./pages/admin/AdminDashboardPage";
@@ -29,6 +29,7 @@ export default function App() {
   const [selectedModalService, setSelectedModalService] = useState<ServiceItem | null>(null);
   const [prefilledService, setPrefilledService] = useState<string>("");
   const [showTestSuite, setShowTestSuite] = useState(false);
+  const navSeqRef = useRef<number>(0);
 
   // Disable automatic browser scroll restoration on route/hash changes
   useEffect(() => {
@@ -43,12 +44,6 @@ export default function App() {
     document.documentElement.scrollTop = 0;
     document.body.scrollTop = 0;
 
-    const raf = requestAnimationFrame(() => {
-      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
-      document.documentElement.scrollTop = 0;
-      document.body.scrollTop = 0;
-    });
-
     const timer = setTimeout(() => {
       window.scrollTo({ top: 0, left: 0, behavior: "instant" });
       document.documentElement.scrollTop = 0;
@@ -57,7 +52,6 @@ export default function App() {
     }, 100);
 
     return () => {
-      cancelAnimationFrame(raf);
       clearTimeout(timer);
     };
   }, [currentPage, activeServiceId]);
@@ -97,9 +91,13 @@ export default function App() {
         setCurrentPage(hash);
       }
 
-      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
-      document.documentElement.scrollTop = 0;
-      document.body.scrollTop = 0;
+      if (window.scrollY > 30) {
+        smoothScrollToTop();
+      } else {
+        window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+        document.documentElement.scrollTop = 0;
+        document.body.scrollTop = 0;
+      }
     };
 
     parseLocation();
@@ -112,52 +110,70 @@ export default function App() {
   }, []);
 
   const handleNavigate = (page: string, serviceId?: string) => {
-    // Immediate scroll to top
-    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
-    document.documentElement.scrollTop = 0;
-    document.body.scrollTop = 0;
+    const navId = ++navSeqRef.current;
 
-    if (page === "admin") {
-      try {
-        window.history.pushState({}, "", "/admin");
-      } catch {
-        window.location.hash = "/admin";
-      }
-      setCurrentPage("admin");
+    const isSamePage =
+      currentPage === page &&
+      (page !== "service-detail" || !serviceId || serviceId === activeServiceId);
+
+    // If already on the exact same page/service, just smoothly glide up to top
+    if (isSamePage) {
+      smoothScrollToTop();
       return;
     }
 
-    if (page === "admin-login") {
-      try {
-        window.history.pushState({}, "", "/admin/login");
-      } catch {
-        window.location.hash = "/admin/login";
-      }
-      setCurrentPage("admin-login");
-      return;
-    }
+    const executePageTransition = () => {
+      if (navSeqRef.current !== navId) return;
 
-    if (page === "service-detail" && serviceId) {
-      setActiveServiceId(serviceId);
-      window.location.hash = `/service/${serviceId}`;
-    } else if (page === "home") {
-      try {
-        window.history.pushState({}, "", "/");
-      } catch {}
-      window.location.hash = "/";
+      if (page === "admin") {
+        try {
+          window.history.pushState({}, "", "/admin");
+        } catch {
+          window.location.hash = "/admin";
+        }
+        setCurrentPage("admin");
+        return;
+      }
+
+      if (page === "admin-login") {
+        try {
+          window.history.pushState({}, "", "/admin/login");
+        } catch {
+          window.location.hash = "/admin/login";
+        }
+        setCurrentPage("admin-login");
+        return;
+      }
+
+      if (page === "service-detail" && serviceId) {
+        setActiveServiceId(serviceId);
+        window.location.hash = `/service/${serviceId}`;
+      } else if (page === "home") {
+        try {
+          window.history.pushState({}, "", "/");
+        } catch {}
+        window.location.hash = "/";
+      } else {
+        window.location.hash = `/${page}`;
+      }
+
+      setCurrentPage(page);
+    };
+
+    const currentY =
+      window.scrollY ||
+      window.pageYOffset ||
+      document.documentElement.scrollTop ||
+      document.body.scrollTop ||
+      0;
+
+    if (currentY > 25) {
+      // Smoothly animate scrolling up to the top, then present the new page
+      smoothScrollToTop().then(executePageTransition);
     } else {
-      window.location.hash = `/${page}`;
+      // Already at top, switch page immediately with entrance slide-up animation
+      executePageTransition();
     }
-
-    setCurrentPage(page);
-
-    // Refresh GSAP ScrollTrigger calculations on page change
-    setTimeout(() => {
-      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
-      document.documentElement.scrollTop = 0;
-      document.body.scrollTop = 0;
-      ScrollTrigger.refresh();
-    }, 120);
   };
 
   const handleOpenBooking = (serviceTitle?: string) => {
