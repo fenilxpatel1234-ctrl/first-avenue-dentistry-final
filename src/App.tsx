@@ -30,6 +30,38 @@ export default function App() {
   const [prefilledService, setPrefilledService] = useState<string>("");
   const [showTestSuite, setShowTestSuite] = useState(false);
 
+  // Disable automatic browser scroll restoration on route/hash changes
+  useEffect(() => {
+    if ("scrollRestoration" in window.history) {
+      window.history.scrollRestoration = "manual";
+    }
+  }, []);
+
+  // Guarantee scrolling to the very top whenever page or service changes
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+
+    const raf = requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    });
+
+    const timer = setTimeout(() => {
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+      ScrollTrigger.refresh();
+    }, 100);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(timer);
+    };
+  }, [currentPage, activeServiceId]);
+
   // Sync state with URL path and hash for browser navigation
   useEffect(() => {
     const parseLocation = () => {
@@ -39,10 +71,12 @@ export default function App() {
       // Check pathname or hash for admin routes
       if (pathname === "/admin/login" || hash === "admin/login" || hash === "/admin/login") {
         setCurrentPage("admin-login");
+        window.scrollTo({ top: 0, left: 0, behavior: "instant" });
         return;
       }
       if (pathname === "/admin" || hash === "admin" || hash === "/admin") {
         setCurrentPage("admin");
+        window.scrollTo({ top: 0, left: 0, behavior: "instant" });
         return;
       }
 
@@ -62,6 +96,10 @@ export default function App() {
       ) {
         setCurrentPage(hash);
       }
+
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
     };
 
     parseLocation();
@@ -74,6 +112,11 @@ export default function App() {
   }, []);
 
   const handleNavigate = (page: string, serviceId?: string) => {
+    // Immediate scroll to top
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+
     if (page === "admin") {
       try {
         window.history.pushState({}, "", "/admin");
@@ -81,7 +124,6 @@ export default function App() {
         window.location.hash = "/admin";
       }
       setCurrentPage("admin");
-      window.scrollTo({ top: 0 });
       return;
     }
 
@@ -92,7 +134,6 @@ export default function App() {
         window.location.hash = "/admin/login";
       }
       setCurrentPage("admin-login");
-      window.scrollTo({ top: 0 });
       return;
     }
 
@@ -109,12 +150,14 @@ export default function App() {
     }
 
     setCurrentPage(page);
-    window.scrollTo({ top: 0, behavior: "smooth" });
 
     // Refresh GSAP ScrollTrigger calculations on page change
     setTimeout(() => {
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
       ScrollTrigger.refresh();
-    }, 150);
+    }, 120);
   };
 
   const handleOpenBooking = (serviceTitle?: string) => {

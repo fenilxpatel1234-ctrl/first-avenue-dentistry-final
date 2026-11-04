@@ -55,6 +55,10 @@ export default function Navbar({
     setIsServicesOpen(false);
     setIsMobileServicesOpen(false);
 
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+
     if (onNavigate) {
       onNavigate(page, serviceId);
     }
@@ -64,6 +68,11 @@ export default function Navbar({
     setIsServicesOpen(false);
     setIsMobileMenuOpen(false);
     setIsMobileServicesOpen(false);
+
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+
     if (onNavigate) {
       onNavigate("service-detail", serviceId);
     }
