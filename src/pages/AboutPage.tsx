@@ -266,7 +266,39 @@ export default function AboutPage({ onBookClick, onNavigate }: AboutPageProps) {
       {/* 3. Core Values Grid */}
       <CoreValuesSection onExploreServices={() => onNavigate("services")} />
 
-      {/* 4. Consultation Call to Action */}
+      {/* 4. Three Pillars Highlight Strip (01, 02, 03 from About Us / Our Team page) */}
+      <section className="py-16 sm:py-20 px-4 sm:px-6 lg:px-12 bg-[#060C16] text-white">
+        <div className="max-w-[1360px] mx-auto grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8 items-stretch">
+          <div className="h-full p-6 rounded-2xl bg-white/5 border border-white/10 flex flex-col justify-start space-y-2">
+            <span className="font-mono text-xl sm:text-2xl lg:text-3xl font-bold text-[#4E8FFF]">
+              01 — Emergency Dental Care
+            </span>
+            <p className="text-xs sm:text-sm text-white/75 leading-relaxed">
+              We offer quick and immediate care services for all kinds of dental emergencies. Our emergency dental clinic is equipped with state-of-the-art equipment and leading-edge technology to handle a variety of urgent dental concerns.
+            </p>
+          </div>
+
+          <div className="h-full p-6 rounded-2xl bg-white/5 border border-white/10 flex flex-col justify-start space-y-2">
+            <span className="font-mono text-xl sm:text-2xl lg:text-3xl font-bold text-[#4E8FFF]">
+              02 — Family Dental Care
+            </span>
+            <p className="text-xs sm:text-sm text-white/75 leading-relaxed">
+              At First Avenue Dentistry, we believe in nurturing healthy smiles for the whole family. Our family dental care services are designed to meet the needs of patients of all ages.
+            </p>
+          </div>
+
+          <div className="h-full p-6 rounded-2xl bg-white/5 border border-white/10 flex flex-col justify-start space-y-2">
+            <span className="font-mono text-xl sm:text-2xl lg:text-3xl font-bold text-[#4E8FFF]">
+              03 — Cosmetic Dentistry
+            </span>
+            <p className="text-xs sm:text-sm text-white/75 leading-relaxed">
+              Our cosmetic dentistry services will help enhance the appearance of your teeth and boost your self-confidence. From teeth whitening and porcelain veneers to dental implants, we can do it all.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* 5. Consultation Call to Action */}
       <section className="py-16 sm:py-24 px-4 sm:px-6 lg:px-12 bg-[#F4F7FF]">
         <div className="max-w-[1100px] mx-auto p-6 sm:p-14 rounded-[28px] sm:rounded-[32px] bg-white border border-[#E9EDF0] shadow-xl text-center space-y-5 sm:space-y-6">
           <h3 className="text-2xl sm:text-4xl font-bold text-[#060C16] tracking-tight">

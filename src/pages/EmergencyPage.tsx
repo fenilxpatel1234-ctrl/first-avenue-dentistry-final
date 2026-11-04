@@ -18,25 +18,25 @@ interface EmergencyPageProps {
 
 const EMERGENCY_PILLARS = [
   {
-    title: "Severe Toothache & Infection",
-    urgency: "Immediate Relief",
-    desc: "Sudden throbbing, persistent tooth pain, or swelling in your jaw and gums that makes sleeping or eating difficult.",
+    title: "01 — Emergency Dental Care",
+    urgency: "Quick and Immediate Care",
+    desc: "We offer quick and immediate care services for all kinds of dental emergencies. Our emergency dental clinic is equipped with state-of-the-art equipment and leading-edge technology to handle a variety of urgent dental concerns.",
     firstAid:
-      "Rinse gently with warm salt water, apply a cold compress to the cheek, and contact our emergency dental team immediately.",
+      "Dental emergencies can happen at any time. This is why our clinic is here to provide prompt and effective dental services at any time of the day.",
   },
   {
-    title: "Chipped, Broken or Cracked Tooth",
-    urgency: "Same-Day Attention",
-    desc: "Damage caused by facial trauma or chewing hard objects that fractures enamel and exposes sensitive inner nerve tissue.",
+    title: "02 — Family Dental Care",
+    urgency: "Patients of All Ages",
+    desc: "At First Avenue Dentistry, we believe in nurturing healthy smiles for the whole family. Our family dental care services are designed to meet the needs of patients of all ages.",
     firstAid:
-      "Save any tooth fragments in milk or saline, rinse your mouth gently, and avoid chewing on the affected side.",
+      "Our dental services are tailored to meet the unique needs and requirements of our patients of all ages. From routine checkups to cleanings and preventative treatments, we can handle it all.",
   },
   {
-    title: "Knocked-Out (Avulsed) Tooth",
-    urgency: "Within 60 Minutes",
-    desc: "A knocked-out permanent tooth is time-critical. Prompt clinical re-implantation within the hour provides the highest success rate.",
+    title: "03 — Cosmetic & Restorative Care",
+    urgency: "State-of-the-Art Equipment",
+    desc: "Our cosmetic dentistry services will help enhance the appearance of your teeth and boost your self-confidence. From teeth whitening and porcelain veneers to dental implants, we can do it all.",
     firstAid:
-      "Hold the tooth only by the crown (never touch the root), keep it moist in cold milk, and see our dentist immediately.",
+      "Are you looking for a St. Thomas dentist? Call 519 207 6890 or visit our dental clinic at 308 Wellington street, St. Thomas, ON N5R 2S9.",
   },
 ];
 
