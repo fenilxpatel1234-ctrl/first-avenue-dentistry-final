@@ -15,21 +15,19 @@ ScrollTrigger.config({
 export const MOTION_EASE = [0.16, 1, 0.3, 1] as const;
 
 export const pageTransitionVariants = {
-  initial: { opacity: 0, y: 28 },
+  initial: { opacity: 1, y: 0 },
   animate: {
     opacity: 1,
     y: 0,
     transition: {
-      duration: 0.45,
-      ease: MOTION_EASE,
+      duration: 0,
     },
   },
   exit: {
-    opacity: 0,
-    y: -16,
+    opacity: 1,
+    y: 0,
     transition: {
-      duration: 0.22,
-      ease: MOTION_EASE,
+      duration: 0,
     },
   },
 };
