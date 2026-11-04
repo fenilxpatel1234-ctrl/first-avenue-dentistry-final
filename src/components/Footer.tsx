@@ -236,7 +236,7 @@ export default function Footer({
             <div className="p-3.5 rounded-xl bg-white/5 border border-white/10 space-y-1 text-xs">
               <span className="font-semibold text-white flex items-center gap-1.5">
                 <ShieldCheck className="w-3.5 h-3.5 text-[#4E8FFF] shrink-0" />
-                01 — Emergency Dental Care
+                Emergency Dental Care
               </span>
               <p className="text-[11px] text-white/60">
                 We offer quick and immediate care services for all kinds of dental emergencies.

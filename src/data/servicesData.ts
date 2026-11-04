@@ -75,16 +75,6 @@ export const ALL_SERVICES: ServiceItem[] = [
       "First Avenue Family Dental team provides family dental care, cosmetic dentistry, dental implants, dentures, sedation, teeth whitening, orthodontics, and so much more. Therefore, with a full range of services, our patients can enjoy quality attention in just one convenient location.",
       "Guided bone regeneration, or GBR, and guided tissue regeneration, or GTR, can also be used to correct natural teeth, crowns, bridges, and implants. Regular dental check up is necessary to identify teeth disease and treat in early stage.",
     ],
-    contentSections: [
-      {
-        heading: "Three pillars of care for every patient",
-        paragraphs: [
-          "01 — Emergency Dental Care: We offer quick and immediate care services for all kinds of dental emergencies. Our emergency dental clinic is equipped with state-of-the-art equipment and leading-edge technology to handle a variety of urgent dental concerns.",
-          "02 — Family Dental Care: At First Avenue Dentistry, we believe in nurturing healthy smiles for the whole family. Our family dental care services are designed to meet the needs of patients of all ages.",
-          "03 — Cosmetic Dentistry: Our cosmetic dentistry services will help enhance the appearance of your teeth and boost your self-confidence. From teeth whitening and porcelain veneers to dental implants, we can do it all.",
-        ],
-      },
-    ],
     image: "/src/assets/images/vantage_service_dental_implants_1793343971749.jpg",
     highlights: [
       "Dental Crown & Dental Bridge",
@@ -214,16 +204,6 @@ export const ALL_SERVICES: ServiceItem[] = [
       "Are you on the lookout for comprehensive dental care in St. Thomas, ON? Head over to First Avenue Dentistry today where your dental health and comfort are our top priorities.",
       "As one of the leading dental care clinics in St. Thomas, ON, we take pride in our unparalleled expertise and incomparable experience. We understand the importance of a healthy smile and the peace of mind that comes with knowing you have access to emergency dental services when you need them the most.",
       "Our team of dental care experts is committed to excellence and goes beyond just emergency care; we offer a wide range of services encompassing family dentistry and cosmetic dentistry to ensure every aspect of your dental health is addressed with compassion.",
-    ],
-    contentSections: [
-      {
-        heading: "Three pillars of care for every patient",
-        paragraphs: [
-          "01 — Emergency Dental Care: We offer quick and immediate care services for all kinds of dental emergencies. Our emergency dental clinic is equipped with state-of-the-art equipment and leading-edge technology to handle a variety of urgent dental concerns.",
-          "02 — Family Dental Care: At First Avenue Dentistry, we believe in nurturing healthy smiles for the whole family. Our family dental care services are designed to meet the needs of patients of all ages.",
-          "03 — Cosmetic Dentistry: Our cosmetic dentistry services will help enhance the appearance of your teeth and boost your self-confidence. From teeth whitening and porcelain veneers to dental implants, we can do it all.",
-        ],
-      },
     ],
     image: "/src/assets/images/vantage_service_dental_implants_1793343971749.jpg",
     highlights: [

@@ -62,29 +62,6 @@ export default function ServiceDetailPage({
       ? currentService.fullParagraphs
       : [currentService.details];
 
-  const procedureSteps = [
-    {
-      step: "01",
-      title: "Emergency Dental Care",
-      desc: "We offer quick and immediate care services for all kinds of dental emergencies. Our emergency dental clinic is equipped with state-of-the-art equipment and leading-edge technology to handle a variety of urgent dental concerns.",
-    },
-    {
-      step: "02",
-      title: "Family Dental Care",
-      desc: "At First Avenue Dentistry, we believe in nurturing healthy smiles for the whole family. Our family dental care services are designed to meet the needs of patients of all ages.",
-    },
-    {
-      step: "03",
-      title: "Cosmetic Dentistry",
-      desc: "Our cosmetic dentistry services will help enhance the appearance of your teeth and boost your self-confidence. From teeth whitening and porcelain veneers to dental implants, we can do it all.",
-    },
-    {
-      step: "04",
-      title: "Comfort-first care",
-      desc: "Modern, welcoming environment built around you. Regular dental check up is necessary to identify teeth disease and treat in early stage.",
-    },
-  ];
-
   return (
     <motion.div
       ref={containerRef}
@@ -256,46 +233,7 @@ export default function ServiceDetailPage({
         </div>
       </section>
 
-      {/* 4. Three Pillars of Care Timeline */}
-      <section className="py-16 sm:py-24 px-4 sm:px-6 lg:px-12 bg-[#F4F7FF] border-b border-[#E9EDF0]">
-        <div className="max-w-[1360px] mx-auto space-y-12 sm:space-y-16">
-          <div className="flex flex-col items-center text-center max-w-2xl mx-auto space-y-4">
-            <h2 className="text-2xl sm:text-4xl font-bold tracking-tight text-[#060C16]">
-              Three pillars of care for every patient
-            </h2>
-            <p className="text-sm text-[#646464]">
-              Are you on the lookout for comprehensive dental care in St. Thomas, ON? Head over to First Avenue Dentistry today where your dental health and comfort are our top priorities.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 items-stretch">
-            {procedureSteps.map((step) => (
-              <div
-                key={step.step}
-                className="h-full p-6 sm:p-8 rounded-[24px] bg-white border border-[#E9EDF0] shadow-xs space-y-4 flex flex-col justify-between"
-              >
-                <div className="space-y-4">
-                  <span className="font-mono text-2xl font-bold text-[#1E5AFF]">
-                    {step.step} —
-                  </span>
-                  <h3 className="text-lg font-bold text-[#060C16]">
-                    {step.title}
-                  </h3>
-                  <p className="text-xs sm:text-sm text-[#646464] leading-relaxed">
-                    {step.desc}
-                  </p>
-                </div>
-
-                <div className="pt-4 border-t border-[#E9EDF0] text-[11px] font-semibold text-[#1E5AFF]">
-                  First Avenue Family Dentistry
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* 5. Switch to Other Services */}
+      {/* 4. Switch to Other Services */}
       <section className="py-16 sm:py-24 px-4 sm:px-6 lg:px-12 bg-white">
         <div className="max-w-[1360px] mx-auto space-y-10 sm:space-y-12">
           <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 sm:gap-6">

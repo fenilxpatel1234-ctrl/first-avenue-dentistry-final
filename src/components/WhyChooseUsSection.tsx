@@ -93,7 +93,7 @@ export default function WhyChooseUsSection({ onBookClick }: WhyChooseUsSectionPr
             className="text-2xl sm:text-4xl lg:text-[44px] font-bold text-[#060C16] tracking-tight leading-[1.18]"
             style={{ textWrap: "balance" }}
           >
-            Three pillars of care for every patient
+            Why Choose First Avenue Family Dentistry
           </motion.h2>
 
           {/* Paragraph */}
