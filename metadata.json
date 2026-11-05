@@ -1,8 +1,0 @@
-{
-  "name": "First Avenue Dentistry",
-  "description": "First Avenue Dentistry — Comprehensive family, cosmetic, and emergency dental care in St. Thomas, ON.",
-  "requestFramePermissions": [],
-  "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
-}
