@@ -1,0 +1,188 @@
+{
+  "entities": {
+    "Appointment": {
+      "title": "Appointment",
+      "description": "Patient appointment booking requests submitted through public booking modal or managed by clinic admins",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 100, "description": "Patient full name" },
+        "phone": { "type": "string", "maxLength": 30, "description": "Patient contact phone number" },
+        "email": { "type": "string", "maxLength": 100, "description": "Patient email address" },
+        "service": { "type": "string", "maxLength": 100, "description": "Requested dental service" },
+        "reason": { "type": "string", "maxLength": 500, "description": "Reason for appointment" },
+        "preferredTime": { "type": "string", "maxLength": 50, "description": "Preferred time slot" },
+        "preferredDate": { "type": "string", "maxLength": 50, "description": "Preferred appointment date" },
+        "notes": { "type": "string", "maxLength": 1000, "description": "Patient notes or concerns" },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rescheduled", "declined", "expired"],
+          "description": "Current status of the appointment"
+        },
+        "doctorId": { "type": "string", "maxLength": 100, "description": "Unique Doctor ID" },
+        "assignedDoctor": { "type": "string", "maxLength": 100, "description": "Doctor assigned to appointment" },
+        "confirmedDate": { "type": "string", "maxLength": 50, "description": "Confirmed date" },
+        "confirmedTime": { "type": "string", "maxLength": 50, "description": "Confirmed time" },
+        "durationMinutes": { "type": "number", "description": "Appointment duration in minutes" },
+        "reservationId": { "type": "string", "maxLength": 100, "description": "Temporary reservation ID converted into booking" },
+        "adminNotes": { "type": "string", "maxLength": 1000, "description": "Internal notes added by admin" },
+        "declineReason": { "type": "string", "maxLength": 500, "description": "Reason for declining appointment" },
+        "rescheduleReason": { "type": "string", "maxLength": 500, "description": "Reason for rescheduling" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "description": "Last updated timestamp" }
+      },
+      "required": ["name", "phone", "email", "service", "status", "createdAt"]
+    },
+    "DoctorAvailability": {
+      "title": "DoctorAvailability",
+      "description": "Individual doctor appointment availability including recurring weekly schedules and specific date time slots",
+      "type": "object",
+      "properties": {
+        "doctorId": { "type": "string", "maxLength": 100, "description": "Doctor ID" },
+        "doctorName": { "type": "string", "maxLength": 100, "description": "Doctor full name" },
+        "defaultDuration": { "type": "number", "description": "Default slot duration in minutes (15, 30, 45, 60)" },
+        "recurringWeekly": { "type": "array", "description": "Weekly recurring schedule rules" },
+        "specificDates": { "type": "array", "description": "Specific date availability overrides and custom slots" },
+        "updatedAt": { "type": "string", "description": "Last updated timestamp" }
+      },
+      "required": ["doctorId", "doctorName", "defaultDuration", "updatedAt"]
+    },
+    "SlotReservation": {
+      "title": "SlotReservation",
+      "description": "Five-minute temporary appointment slot reservation lock",
+      "type": "object",
+      "properties": {
+        "doctorId": { "type": "string", "maxLength": 100, "description": "Doctor ID" },
+        "doctorName": { "type": "string", "maxLength": 100, "description": "Doctor Name" },
+        "date": { "type": "string", "maxLength": 30, "description": "Appointment date YYYY-MM-DD" },
+        "time": { "type": "string", "maxLength": 30, "description": "Appointment time slot" },
+        "sessionId": { "type": "string", "maxLength": 120, "description": "Client booking session identifier" },
+        "createdAt": { "type": "number", "description": "Creation timestamp ms" },
+        "expiresAt": { "type": "number", "description": "Expiration timestamp ms" },
+        "status": {
+          "type": "string",
+          "enum": ["ACTIVE", "CONVERTED", "EXPIRED", "RELEASED"],
+          "description": "Reservation lock status"
+        }
+      },
+      "required": ["doctorId", "date", "time", "sessionId", "createdAt", "expiresAt", "status"]
+    },
+    "Enquiry": {
+      "title": "Enquiry",
+      "description": "General dental questions and patient messages from public contact section",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 100, "description": "Patient or sender full name" },
+        "email": { "type": "string", "maxLength": 100, "description": "Patient email" },
+        "phone": { "type": "string", "maxLength": 30, "description": "Patient phone" },
+        "service": { "type": "string", "maxLength": 100, "description": "Service of interest" },
+        "message": { "type": "string", "maxLength": 2000, "description": "Message content" },
+        "status": {
+          "type": "string",
+          "enum": ["new", "in_progress", "handled"],
+          "description": "Status of the enquiry"
+        },
+        "createdAt": { "type": "string", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "description": "Last updated timestamp" }
+      },
+      "required": ["name", "email", "phone", "message", "status", "createdAt"]
+    },
+    "Doctor": {
+      "title": "Doctor",
+      "description": "Clinic doctors and dental practitioners",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 100, "description": "Doctor name" },
+        "title": { "type": "string", "maxLength": 100, "description": "Professional title or role" },
+        "qualifications": { "type": "string", "maxLength": 200, "description": "Degrees and dental qualifications" },
+        "specialties": { "type": "array", "description": "Clinical areas of expertise" },
+        "status": { "type": "string", "enum": ["active", "on_leave"], "description": "Availability status" },
+        "email": { "type": "string", "maxLength": 100, "description": "Contact email" },
+        "phone": { "type": "string", "maxLength": 30, "description": "Direct contact phone" },
+        "bio": { "type": "string", "maxLength": 2000, "description": "Professional biography" },
+        "username": { "type": "string", "maxLength": 60, "description": "Doctor portal login username" },
+        "updatedAt": { "type": "string", "description": "Last updated timestamp" }
+      },
+      "required": ["name", "title", "status"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "Verified patient reviews and testimonials",
+      "type": "object",
+      "properties": {
+        "author": { "type": "string", "maxLength": 100, "description": "Patient reviewer name" },
+        "rating": { "type": "number", "description": "Star rating 1 to 5" },
+        "date": { "type": "string", "maxLength": 50, "description": "Review date" },
+        "content": { "type": "string", "maxLength": 2000, "description": "Review text" },
+        "source": { "type": "string", "maxLength": 50, "description": "Platform source (e.g. Google Reviews)" },
+        "status": { "type": "string", "enum": ["approved", "pending", "hidden"], "description": "Publish status" },
+        "createdAt": { "type": "string", "description": "Submission timestamp" }
+      },
+      "required": ["author", "rating", "content", "status"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "Administrative actions audit log",
+      "type": "object",
+      "properties": {
+        "adminEmail": { "type": "string", "maxLength": 100, "description": "Email of admin who executed action" },
+        "action": { "type": "string", "maxLength": 100, "description": "Type of administrative action" },
+        "details": { "type": "string", "maxLength": 1000, "description": "Action details" },
+        "targetId": { "type": "string", "maxLength": 100, "description": "ID of impacted resource" },
+        "targetType": { "type": "string", "maxLength": 50, "description": "Type of impacted resource" },
+        "timestamp": { "type": "string", "description": "Action timestamp" }
+      },
+      "required": ["adminEmail", "action", "details", "timestamp"]
+    },
+    "PracticeSettings": {
+      "title": "PracticeSettings",
+      "description": "Clinic operational contact and schedule settings",
+      "type": "object",
+      "properties": {
+        "clinicName": { "type": "string", "maxLength": 100, "description": "Clinic name" },
+        "phone": { "type": "string", "maxLength": 30, "description": "Primary phone" },
+        "email": { "type": "string", "maxLength": 100, "description": "Clinic email" },
+        "address": { "type": "string", "maxLength": 200, "description": "Clinic physical address" },
+        "weekdayHours": { "type": "string", "maxLength": 100, "description": "Mon-Fri hours" },
+        "saturdayHours": { "type": "string", "maxLength": 100, "description": "Saturday hours" },
+        "sundayHours": { "type": "string", "maxLength": 100, "description": "Sunday hours" },
+        "emergencyPhone": { "type": "string", "maxLength": 30, "description": "Emergency telephone line" },
+        "updatedAt": { "type": "string", "description": "Last updated timestamp" }
+      },
+      "required": ["clinicName", "phone", "email", "address"]
+    }
+  },
+  "firestore": {
+    "/appointments/{appointmentId}": {
+      "schema": "Appointment",
+      "description": "Patient appointment requests from public booking form and managed by clinic team"
+    },
+    "/doctor_availability/{doctorId}": {
+      "schema": "DoctorAvailability",
+      "description": "Independent appointment availability schedules per doctor"
+    },
+    "/slot_reservations/{reservationId}": {
+      "schema": "SlotReservation",
+      "description": "Five-minute temporary slot reservation locks"
+    },
+    "/enquiries/{enquiryId}": {
+      "schema": "Enquiry",
+      "description": "Patient inquiries and messages from the contact page"
+    },
+    "/doctors/{doctorId}": {
+      "schema": "Doctor",
+      "description": "Clinical staff and doctors profiles"
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Patient reviews and moderation states"
+    },
+    "/activity_logs/{logId}": {
+      "schema": "ActivityLog",
+      "description": "Audit trail of admin operations and status changes"
+    },
+    "/practice_settings/{settingId}": {
+      "schema": "PracticeSettings",
+      "description": "Practice hours, address, and clinic configuration"
+    }
+  }
+}

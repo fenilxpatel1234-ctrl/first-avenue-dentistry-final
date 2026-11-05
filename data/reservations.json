@@ -1,0 +1,72 @@
+[
+  {
+    "id": "res-1793865326332-d10a97",
+    "doctorId": "dr-muo3k3pe",
+    "doctorName": "Fenil Patel",
+    "date": "2026-11-05",
+    "time": "04:30 PM",
+    "sessionId": "SESS-1793864681300-oh7vuc",
+    "patientName": "",
+    "patientEmail": "",
+    "createdAt": 1793865326332,
+    "expiresAt": 1793865626332,
+    "expiresAtMs": 1793865626332,
+    "status": "RELEASED"
+  },
+  {
+    "id": "res-1793865533837-b3c75e",
+    "doctorId": "doc-allah",
+    "doctorName": "allah",
+    "date": "2026-11-05",
+    "time": "12:00 PM",
+    "sessionId": "SESS-1793864681300-oh7vuc",
+    "patientName": "Fenil Patel",
+    "patientEmail": "fenilxpatel2642@gmail.com",
+    "createdAt": 1793865533837,
+    "expiresAt": 1793865833837,
+    "expiresAtMs": 1793865833837,
+    "status": "RELEASED"
+  },
+  {
+    "id": "res-1793865539236-839ea9",
+    "doctorId": "doc-allah",
+    "doctorName": "allah",
+    "date": "2026-11-05",
+    "time": "01:00 PM",
+    "sessionId": "SESS-1793864681300-oh7vuc",
+    "patientName": "Fenil Patel",
+    "patientEmail": "fenilxpatel2642@gmail.com",
+    "createdAt": 1793865539236,
+    "expiresAt": 1793865839236,
+    "expiresAtMs": 1793865839236,
+    "status": "CONVERTED"
+  },
+  {
+    "id": "res-1793866908221-eee817",
+    "doctorId": "doc-allah",
+    "doctorName": "allah",
+    "date": "2026-11-05",
+    "time": "10:00 AM",
+    "sessionId": "session-patient-A",
+    "patientName": "",
+    "patientEmail": "",
+    "createdAt": 1793866908221,
+    "expiresAt": 1793867208221,
+    "expiresAtMs": 1793867208221,
+    "status": "RELEASED"
+  },
+  {
+    "id": "res-1793878980489-79e61e",
+    "doctorId": "dr-muo3k3pe",
+    "doctorName": "Fenil Patel",
+    "date": "2027-06-15",
+    "time": "09:00 AM",
+    "sessionId": "sec-test-session-A",
+    "patientName": "Alice Secret",
+    "patientEmail": "alice@secret.com",
+    "createdAt": 1793878980489,
+    "expiresAt": 1793879280489,
+    "expiresAtMs": 1793879280489,
+    "status": "RELEASED"
+  }
+]

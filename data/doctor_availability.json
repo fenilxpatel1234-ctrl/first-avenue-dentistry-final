@@ -1,0 +1,74 @@
+[
+  {
+    "doctorId": "dr-muo3k3pe",
+    "doctorName": "Fenil Patel",
+    "defaultDuration": 30,
+    "recurringWeekly": [
+      {
+        "dayOfWeek": 0,
+        "dayName": "Sunday",
+        "enabled": false,
+        "startTime": "09:00",
+        "endTime": "17:00",
+        "slotDuration": 30,
+        "slots": []
+      },
+      {
+        "dayOfWeek": 1,
+        "dayName": "Monday",
+        "enabled": false,
+        "startTime": "09:00",
+        "endTime": "17:00",
+        "slotDuration": 30,
+        "slots": []
+      },
+      {
+        "dayOfWeek": 2,
+        "dayName": "Tuesday",
+        "enabled": false,
+        "startTime": "09:00",
+        "endTime": "17:00",
+        "slotDuration": 30,
+        "slots": []
+      },
+      {
+        "dayOfWeek": 3,
+        "dayName": "Wednesday",
+        "enabled": false,
+        "startTime": "09:00",
+        "endTime": "17:00",
+        "slotDuration": 30,
+        "slots": []
+      },
+      {
+        "dayOfWeek": 4,
+        "dayName": "Thursday",
+        "enabled": false,
+        "startTime": "09:00",
+        "endTime": "17:00",
+        "slotDuration": 30,
+        "slots": []
+      },
+      {
+        "dayOfWeek": 5,
+        "dayName": "Friday",
+        "enabled": false,
+        "startTime": "09:00",
+        "endTime": "17:00",
+        "slotDuration": 30,
+        "slots": []
+      },
+      {
+        "dayOfWeek": 6,
+        "dayName": "Saturday",
+        "enabled": false,
+        "startTime": "09:00",
+        "endTime": "17:00",
+        "slotDuration": 30,
+        "slots": []
+      }
+    ],
+    "specificDates": [],
+    "updatedAt": "2026-11-05T11:56:17.782Z"
+  }
+]

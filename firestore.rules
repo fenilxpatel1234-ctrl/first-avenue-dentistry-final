@@ -1,0 +1,96 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        (
+          request.auth.token.email_verified == true &&
+          (
+            request.auth.token.email == 'fenilxpatel2642@gmail.com' ||
+            request.auth.token.email == 'firstavenuedentistry@gmail.com'
+          )
+        ) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // Default Deny: All unmapped paths are completely blocked
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Patient Clinical Appointments:
+    // Confidential medical & contact records are strictly hidden from public reads.
+    // Public can only submit a new pending booking with bounded fields.
+    match /appointments/{appointmentId} {
+      allow read: if isAdmin();
+      allow create: if request.resource.data.status == 'pending' &&
+                       request.resource.data.name is string &&
+                       request.resource.data.name.size() > 0 &&
+                       request.resource.data.name.size() <= 140 &&
+                       request.resource.data.email is string &&
+                       request.resource.data.email.size() > 3 &&
+                       request.resource.data.email.size() <= 160 &&
+                       request.resource.data.phone is string &&
+                       request.resource.data.phone.size() > 0 &&
+                       request.resource.data.phone.size() <= 40;
+      allow update, delete: if isAdmin();
+    }
+
+    // Doctor Availability Schedules: Public read for booking, writes locked to Admin
+    match /doctor_availability/{doctorId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Doctors Profiles: Public read, writes locked to Admin
+    match /doctors/{doctorId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Practice Operational Settings: Public read, writes locked to Admin
+    match /practice_settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Activity Logs: Reads restricted to Admin; create allowed with bounded action length
+    match /activity_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if request.resource.data.action is string &&
+                       request.resource.data.action.size() <= 300;
+      allow update, delete: if isAdmin();
+    }
+
+    // Patient Contact Inquiries: Clinical/contact questions hidden from public reads
+    match /enquiries/{enquiryId} {
+      allow read: if isAdmin();
+      allow create: if request.resource.data.status == 'new' &&
+                       request.resource.data.email is string &&
+                       request.resource.data.email.size() > 3 &&
+                       request.resource.data.email.size() <= 160;
+      allow update, delete: if isAdmin();
+    }
+
+    // Patient Reviews: Only approved reviews viewable publicly, submissions pending
+    match /reviews/{reviewId} {
+      allow read: if resource.data.status == 'approved' || isAdmin();
+      allow create: if request.resource.data.status == 'pending' &&
+                       request.resource.data.name is string &&
+                       request.resource.data.name.size() <= 120;
+      allow update, delete: if isAdmin();
+    }
+
+    // Admin Directory: Protected by admin authorization
+    match /admins/{adminId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
+

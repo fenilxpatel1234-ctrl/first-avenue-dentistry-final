@@ -1,0 +1,72 @@
+{
+  "mode": "live",
+  "maintenanceTitle": "Scheduled System & Clinical Upgrade in Progress",
+  "maintenanceMessage": "First Avenue Family Dentistry is currently performing scheduled platform maintenance to enhance your online booking and patient care experience. We will be back online shortly.",
+  "maintenanceEta": "Within 1 Hour",
+  "showEmergencyContact": true,
+  "inaugurationTargetTime": "2026-11-05T12:10:49.289Z",
+  "inaugurationTitle": "Grand Digital Inauguration",
+  "inaugurationSubtitle": "Welcome to the official digital launch of First Avenue Family Dentistry in St. Thomas, Ontario.",
+  "inaugurationNote": "Counting down to the first official reveal of our new patient portal & website.",
+  "autoRevealOnZero": true,
+  "updatedAt": "2026-11-05T11:43:00.533Z",
+  "updatedBy": "Lead System Developer (Fenil Patel)",
+  "history": [
+    {
+      "id": "sc-1793878980533",
+      "timestamp": "2026-11-05T11:43:00.533Z",
+      "mode": "live",
+      "note": "Restored to LIVE mode after security verification",
+      "actor": "Lead System Developer (Fenil Patel)"
+    },
+    {
+      "id": "sc-1793878980529",
+      "timestamp": "2026-11-05T11:43:00.529Z",
+      "mode": "inauguration",
+      "note": "Automated inauguration timer verification",
+      "actor": "Lead System Developer (Fenil Patel)"
+    },
+    {
+      "id": "sc-1793878980525",
+      "timestamp": "2026-11-05T11:43:00.525Z",
+      "mode": "maintenance",
+      "note": "Automated pre-release verification test",
+      "actor": "Lead System Developer (Fenil Patel)"
+    },
+    {
+      "id": "sc-1793878820261",
+      "timestamp": "2026-11-05T11:40:20.261Z",
+      "mode": "live",
+      "note": "Restored to LIVE mode after security verification",
+      "actor": "Lead System Developer (Fenil Patel)"
+    },
+    {
+      "id": "sc-1793878820258",
+      "timestamp": "2026-11-05T11:40:20.258Z",
+      "mode": "maintenance",
+      "note": "Automated pre-release verification test",
+      "actor": "Lead System Developer (Fenil Patel)"
+    },
+    {
+      "id": "sc-1793877059732",
+      "timestamp": "2026-11-05T11:10:59.732Z",
+      "mode": "live",
+      "note": "Restored website to Live Public Mode",
+      "actor": "Developer Console"
+    },
+    {
+      "id": "sc-1793877059724",
+      "timestamp": "2026-11-05T11:10:59.724Z",
+      "mode": "maintenance",
+      "note": "Switched website to Maintenance Mode",
+      "actor": "Developer Console"
+    },
+    {
+      "id": "sc-1793877049290",
+      "timestamp": "2026-11-05T11:10:49.290Z",
+      "mode": "live",
+      "note": "Initial system state: Live Public Website",
+      "actor": "System Bootstrap"
+    }
+  ]
+}
