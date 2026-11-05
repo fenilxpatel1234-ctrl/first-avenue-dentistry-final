@@ -216,7 +216,7 @@ export const MaintenanceView: React.FC<{
                 </div>
                 <div className="text-sm text-slate-300 mt-1 flex items-center gap-2">
                   <MapPin className="w-4 h-4 text-[#1E5AFF] shrink-0" />
-                  191 First Ave, St. Thomas, ON N5R 4P2
+                  308 Wellington street, St. Thomas, ON N5R 2S9
                 </div>
               </div>
 
@@ -454,7 +454,7 @@ export const InaugurationCountdownView: React.FC<{
 
       {/* Footer */}
       <footer className="relative z-10 w-full max-w-6xl mx-auto px-6 py-5 flex items-center justify-between text-xs text-slate-500 border-t border-white/5">
-        <span>191 First Ave, St. Thomas, ON • (519) 207-6890</span>
+        <span>308 Wellington street, St. Thomas, ON N5R 2S9 • (519) 207-6890</span>
         <button
           type="button"
           onClick={onOpenDeveloperPortal}

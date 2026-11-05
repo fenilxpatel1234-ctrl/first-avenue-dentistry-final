@@ -73,7 +73,7 @@ function createRateLimiter(maxRequests: number, windowMs: number, errorMessage =
 const CLINIC_NAME = 'First Avenue Dentistry';
 const CLINIC_FULL_NAME = 'First Avenue Family Dentistry';
 const CLINIC_PHONE = '(519) 207-6890';
-const CLINIC_ADDRESS = '308 Wellington Street, St. Thomas, ON N5R 2S9';
+const CLINIC_ADDRESS = '308 Wellington street, St. Thomas, ON N5R 2S9';
 const SITE_URL = (process.env.SITE_URL || process.env.APP_URL || 'http://localhost:3000').replace(/\/$/, '');
 
 // Data Storage Paths
@@ -3573,7 +3573,7 @@ app.post('/api/ai/dental-assistant', createRateLimiter(20, 60000), async (req: R
             role: 'user',
             parts: [
               {
-                text: `You are the friendly, helpful dental clinic assistant for First Avenue Dentistry (${CLINIC_FULL_NAME}) in St. Thomas, Ontario (Address: 308 Wellington Street, Tel: (519) 207-6890, Doctors: Dr. D. K. Sharma, Dr. Shradha Sharma, Dr. John, Dr. Sarah, and Dr. Michael).
+                text: `You are the friendly, helpful dental clinic assistant for First Avenue Dentistry (${CLINIC_FULL_NAME}) in St. Thomas, Ontario (Address: 308 Wellington street, St. Thomas, ON N5R 2S9, Tel: (519) 207-6890, Doctors: Dr. D. K. Sharma, Dr. Shradha Sharma, Dr. John, Dr. Sarah, and Dr. Michael).
 Answer the patient's question warmly, accurately, and concisely (2-3 sentences max). If they have acute pain, recommend booking an emergency visit or calling directly.
 Patient question: "${message}"`,
               },
@@ -3603,7 +3603,7 @@ Patient question: "${message}"`,
   }
   if (text.includes('hour') || text.includes('open') || text.includes('time')) {
     return res.json({
-      answer: "Our clinic is open Monday to Friday from 9:00 AM to 6:00 PM, and Saturdays from 9:00 AM to 5:00 PM. We are located at 308 Wellington Street in St. Thomas, ON.",
+      answer: "Our clinic is open Monday to Friday from 9:00 AM to 6:00 PM, and Saturdays from 9:00 AM to 5:00 PM. We are located at 308 Wellington street, St. Thomas, ON N5R 2S9.",
     });
   }
 

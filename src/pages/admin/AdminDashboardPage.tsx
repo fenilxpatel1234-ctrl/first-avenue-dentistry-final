@@ -134,7 +134,7 @@ export default function AdminDashboardPage({
     clinicName: 'First Avenue Family Dentistry',
     phone: '(519) 207-6890',
     email: 'firstavenuedentistry@gmail.com',
-    address: '308 Wellington Street, St. Thomas, ON N5R 2S9',
+    address: '308 Wellington street, St. Thomas, ON N5R 2S9',
     weekdayHours: '9:00 AM – 6:00 PM',
     saturdayHours: '9:00 AM – 5:00 PM',
     sundayHours: 'Closed',
@@ -1332,7 +1332,7 @@ export default function AdminDashboardPage({
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
               <span className="font-semibold text-[#060C16] truncate">Clinical Management Live</span>
               <span className="hidden sm:inline">•</span>
-              <span className="hidden sm:inline truncate">308 Wellington St, St. Thomas</span>
+              <span className="hidden sm:inline truncate">308 Wellington street, St. Thomas, ON N5R 2S9</span>
             </div>
           </div>
 

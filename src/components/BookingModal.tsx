@@ -120,9 +120,9 @@ function buildGoogleCalendarLink(apt: {
 
   const title = encodeURIComponent(`Dental Visit: ${apt.service} - First Avenue Dentistry`);
   const details = encodeURIComponent(
-    `Dental appointment for ${apt.service} with ${apt.doctor}.\nLocation: 308 Wellington Street, St. Thomas, ON N5R 2S9\nPhone: (519) 207-6890`
+    `Dental appointment for ${apt.service} with ${apt.doctor}.\nLocation: 308 Wellington street, St. Thomas, ON N5R 2S9\nPhone: (519) 207-6890`
   );
-  const location = encodeURIComponent("308 Wellington Street, St. Thomas, ON N5R 2S9");
+  const location = encodeURIComponent("308 Wellington street, St. Thomas, ON N5R 2S9");
 
   return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${startStr}/${endStr}&details=${details}&location=${location}`;
 }
@@ -150,8 +150,8 @@ function downloadIcsInvite(apt: {
     "METHOD:REQUEST",
     "BEGIN:VEVENT",
     `SUMMARY:Dental Visit: ${apt.service} - First Avenue Dentistry`,
-    `DESCRIPTION:Patient: ${apt.patientName}\\nSpecialist: ${apt.doctor}\\nPhone: (519) 207-6890\\nAddress: 308 Wellington St, St. Thomas ON`,
-    "LOCATION:308 Wellington Street, St. Thomas, ON N5R 2S9",
+    `DESCRIPTION:Patient: ${apt.patientName}\\nSpecialist: ${apt.doctor}\\nPhone: (519) 207-6890\\nAddress: 308 Wellington street, St. Thomas, ON N5R 2S9`,
+    "LOCATION:308 Wellington street, St. Thomas, ON N5R 2S9",
     `DTSTART:${cleanDate}T${time24}00`,
     `DTEND:${endStr}`,
     "STATUS:TENTATIVE",
