@@ -241,8 +241,6 @@ export const MaintenanceView: React.FC<{
           title="Developer Systems Console"
           className="inline-flex items-center gap-1.5 text-slate-600 hover:text-slate-300 transition-colors font-mono text-[11px] cursor-pointer"
         >
-          <Terminal className="w-3.5 h-3.5" />
-          SysOps
         </button>
       </footer>
     </div>
@@ -463,8 +461,6 @@ export const InaugurationCountdownView: React.FC<{
           title="Developer Systems Console"
           className="inline-flex items-center gap-1.5 text-slate-600 hover:text-slate-300 transition-colors font-mono text-[11px] cursor-pointer"
         >
-          <Terminal className="w-3.5 h-3.5" />
-          SysOps
         </button>
       </footer>
     </div>
@@ -904,11 +900,10 @@ export const DeveloperPortalPage: React.FC<{
               type="button"
               onClick={handleToggleBypass}
               title="When enabled, your browser bypasses Maintenance & Inauguration screens so you can test the live website while visitors see the lock screen."
-              className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border text-xs font-mono transition-colors cursor-pointer ${
-                devBypass
+              className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border text-xs font-mono transition-colors cursor-pointer ${devBypass
                   ? "bg-[#1E5AFF]/20 border-[#1E5AFF] text-white"
                   : "bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200"
-              }`}
+                }`}
             >
               {devBypass ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
               <span>Dev Bypass: {devBypass ? "ON" : "OFF"}</span>
@@ -944,11 +939,10 @@ export const DeveloperPortalPage: React.FC<{
               initial={{ opacity: 0, y: -8 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
-              className={`p-4 rounded-2xl border flex items-center justify-between gap-4 ${
-                saveBanner.type === "success"
+              className={`p-4 rounded-2xl border flex items-center justify-between gap-4 ${saveBanner.type === "success"
                   ? "bg-[#10B981]/10 border-[#10B981]/40 text-[#34D399]"
                   : "bg-red-950/60 border-red-800 text-red-200"
-              }`}
+                }`}
             >
               <div className="flex items-center gap-3 text-sm font-medium">
                 {saveBanner.type === "success" ? (
@@ -998,11 +992,10 @@ export const DeveloperPortalPage: React.FC<{
             {/* Mode 1: LIVE */}
             <div
               onClick={() => setDraftMode("live")}
-              className={`rounded-2xl p-5 border transition-all cursor-pointer flex flex-col justify-between ${
-                draftMode === "live"
+              className={`rounded-2xl p-5 border transition-all cursor-pointer flex flex-col justify-between ${draftMode === "live"
                   ? "bg-[#10B981]/10 border-[#10B981] shadow-lg shadow-[#10B981]/10"
                   : "bg-[#080B10] border-slate-800 hover:border-slate-700"
-              }`}
+                }`}
             >
               <div>
                 <div className="flex items-center justify-between mb-4">
@@ -1010,11 +1003,10 @@ export const DeveloperPortalPage: React.FC<{
                     <Globe className="w-5 h-5" />
                   </div>
                   <span
-                    className={`px-2.5 py-1 rounded-md text-[10px] font-mono uppercase font-bold ${
-                      siteControl.mode === "live"
+                    className={`px-2.5 py-1 rounded-md text-[10px] font-mono uppercase font-bold ${siteControl.mode === "live"
                         ? "bg-[#10B981] text-[#04130D]"
                         : "bg-slate-800 text-slate-400"
-                    }`}
+                      }`}
                   >
                     {siteControl.mode === "live" ? "Currently Active" : "Standby"}
                   </span>
@@ -1047,11 +1039,10 @@ export const DeveloperPortalPage: React.FC<{
                 setDraftMode("maintenance");
                 setPreviewTab("maintenance");
               }}
-              className={`rounded-2xl p-5 border transition-all cursor-pointer flex flex-col justify-between ${
-                draftMode === "maintenance"
+              className={`rounded-2xl p-5 border transition-all cursor-pointer flex flex-col justify-between ${draftMode === "maintenance"
                   ? "bg-[#F59E0B]/10 border-[#F59E0B] shadow-lg shadow-[#F59E0B]/10"
                   : "bg-[#080B10] border-slate-800 hover:border-slate-700"
-              }`}
+                }`}
             >
               <div>
                 <div className="flex items-center justify-between mb-4">
@@ -1059,11 +1050,10 @@ export const DeveloperPortalPage: React.FC<{
                     <Wrench className="w-5 h-5" />
                   </div>
                   <span
-                    className={`px-2.5 py-1 rounded-md text-[10px] font-mono uppercase font-bold ${
-                      siteControl.mode === "maintenance"
+                    className={`px-2.5 py-1 rounded-md text-[10px] font-mono uppercase font-bold ${siteControl.mode === "maintenance"
                         ? "bg-[#F59E0B] text-[#1F1300]"
                         : "bg-slate-800 text-slate-400"
-                    }`}
+                      }`}
                   >
                     {siteControl.mode === "maintenance" ? "Currently Active" : "Standby"}
                   </span>
@@ -1097,11 +1087,10 @@ export const DeveloperPortalPage: React.FC<{
                 setDraftMode("inauguration");
                 setPreviewTab("inauguration");
               }}
-              className={`rounded-2xl p-5 border transition-all cursor-pointer flex flex-col justify-between ${
-                draftMode === "inauguration"
+              className={`rounded-2xl p-5 border transition-all cursor-pointer flex flex-col justify-between ${draftMode === "inauguration"
                   ? "bg-[#1E5AFF]/15 border-[#1E5AFF] shadow-lg shadow-[#1E5AFF]/15"
                   : "bg-[#080B10] border-slate-800 hover:border-slate-700"
-              }`}
+                }`}
             >
               <div>
                 <div className="flex items-center justify-between mb-4">
@@ -1109,11 +1098,10 @@ export const DeveloperPortalPage: React.FC<{
                     <Rocket className="w-5 h-5" />
                   </div>
                   <span
-                    className={`px-2.5 py-1 rounded-md text-[10px] font-mono uppercase font-bold ${
-                      siteControl.mode === "inauguration"
+                    className={`px-2.5 py-1 rounded-md text-[10px] font-mono uppercase font-bold ${siteControl.mode === "inauguration"
                         ? "bg-[#1E5AFF] text-white"
                         : "bg-slate-800 text-slate-400"
-                    }`}
+                      }`}
                   >
                     {siteControl.mode === "inauguration" ? "Currently Active" : "Standby"}
                   </span>
@@ -1407,33 +1395,30 @@ export const DeveloperPortalPage: React.FC<{
               <button
                 type="button"
                 onClick={() => setPreviewTab("maintenance")}
-                className={`px-3.5 py-1.5 rounded-lg font-mono text-xs transition-colors cursor-pointer ${
-                  previewTab === "maintenance"
+                className={`px-3.5 py-1.5 rounded-lg font-mono text-xs transition-colors cursor-pointer ${previewTab === "maintenance"
                     ? "bg-[#F59E0B] text-[#1F1300] font-bold"
                     : "bg-slate-800 text-slate-300 hover:bg-slate-700"
-                }`}
+                  }`}
               >
                 Preview Maintenance Screen
               </button>
               <button
                 type="button"
                 onClick={() => setPreviewTab("inauguration")}
-                className={`px-3.5 py-1.5 rounded-lg font-mono text-xs transition-colors cursor-pointer ${
-                  previewTab === "inauguration"
+                className={`px-3.5 py-1.5 rounded-lg font-mono text-xs transition-colors cursor-pointer ${previewTab === "inauguration"
                     ? "bg-[#1E5AFF] text-white font-bold"
                     : "bg-slate-800 text-slate-300 hover:bg-slate-700"
-                }`}
+                  }`}
               >
                 Preview Inauguration Screen
               </button>
               <button
                 type="button"
                 onClick={() => setPreviewTab("audit")}
-                className={`px-3.5 py-1.5 rounded-lg font-mono text-xs transition-colors cursor-pointer ${
-                  previewTab === "audit"
+                className={`px-3.5 py-1.5 rounded-lg font-mono text-xs transition-colors cursor-pointer ${previewTab === "audit"
                     ? "bg-[#10B981] text-[#04130D] font-bold"
                     : "bg-slate-800 text-slate-300 hover:bg-slate-700"
-                }`}
+                  }`}
               >
                 Audit Log ({siteControl.history?.length || 0})
               </button>
@@ -1454,13 +1439,12 @@ export const DeveloperPortalPage: React.FC<{
                 >
                   <div className="flex items-center gap-3">
                     <span
-                      className={`px-2 py-0.5 rounded uppercase text-[10px] font-bold ${
-                        item.mode === "live"
+                      className={`px-2 py-0.5 rounded uppercase text-[10px] font-bold ${item.mode === "live"
                           ? "bg-[#10B981]/20 text-[#34D399]"
                           : item.mode === "maintenance"
-                          ? "bg-[#F59E0B]/20 text-[#FBBF24]"
-                          : "bg-[#1E5AFF]/20 text-[#93C5FD]"
-                      }`}
+                            ? "bg-[#F59E0B]/20 text-[#FBBF24]"
+                            : "bg-[#1E5AFF]/20 text-[#93C5FD]"
+                        }`}
                     >
                       {item.mode}
                     </span>
@@ -1484,7 +1468,7 @@ export const DeveloperPortalPage: React.FC<{
                     maintenanceEta,
                     showEmergencyContact,
                   }}
-                  onOpenDeveloperPortal={() => {}}
+                  onOpenDeveloperPortal={() => { }}
                 />
               ) : (
                 <InaugurationCountdownView
@@ -1497,7 +1481,7 @@ export const DeveloperPortalPage: React.FC<{
                     autoRevealOnZero: false, // don't auto-exit during preview inside console
                   }}
                   onRevealComplete={() => handleForceRevealNow()}
-                  onOpenDeveloperPortal={() => {}}
+                  onOpenDeveloperPortal={() => { }}
                 />
               )}
             </div>
