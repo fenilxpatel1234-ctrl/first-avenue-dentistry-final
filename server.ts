@@ -4099,6 +4099,10 @@ async function startServer() {
 
   // Always serve static files in public/assets (such as patient PDF forms and logos)
   app.use('/assets', express.static(path.join(publicPath, 'assets')));
+  app.use('/src/assets', express.static(path.join(process.cwd(), 'src', 'assets')));
+  app.use('/src/assets', express.static(path.join(publicPath, 'src', 'assets')));
+  app.use('/assets/images', express.static(path.join(process.cwd(), 'src', 'assets', 'images')));
+  app.use('/assets/images', express.static(path.join(publicPath, 'assets', 'images')));
 
   const distPath = path.join(process.cwd(), 'dist');
   const distIndex = path.join(distPath, 'index.html');
