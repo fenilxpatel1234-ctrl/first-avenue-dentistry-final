@@ -1,62 +1,20 @@
 [
   {
-    "createdAt": "2026-07-28T19:29:33.644Z",
-    "email": "fenilxpatel1234@gmail.com",
-    "gender": "male",
-    "id": "admin-1",
-    "lastLogin": "2026-10-30T05:05:40.847Z",
-    "name": "Developer Fenil Patel",
-    "password": "sha256$900df3decac1d8a3e638285cffd2524f$b2dbbe72d4e919f2ab71383a4d8b0c3ca88afa69812971659115fe62a6292449",
-    "role": "Super Admin",
-    "username": "admin"
-  },
-  {
-    "createdAt": "2026-09-13T10:22:09.145Z",
-    "email": "mainhome132000@gmail.com",
-    "gender": "male",
-    "id": "admin-mtzo03cp",
-    "name": "dev-Jenish(server handler)",
-    "password": "sha256$8245579b50c07f09b58bbdbf1e54b930$39ad5e5b8a1cdbdb67d4cba7fe60663de15875fc36bb5a88afc1d146e7e036b1",
-    "role": "Admin",
-    "username": "admin-2"
-  },
-  {
-    "createdAt": "2026-11-04T13:17:09.470Z",
-    "email": "smartyfenil898@gmail.com",
-    "id": "admin-fenil",
+    "id": "admin-fenil-primary",
     "name": "Dr. Fenil",
+    "email": "fenilxpatel2642@gmail.com",
+    "username": "fenil",
     "password": "1234567890",
     "role": "Super Admin",
-    "username": "fenil"
+    "createdAt": "2026-11-06T11:00:00.000Z"
   },
   {
-    "createdAt": "2026-11-04T15:05:38.385Z",
-    "doctorId": "dr-muo3k3pe",
+    "id": "admin-clinic-owner",
+    "name": "Clinic Administrator",
     "email": "fenilxpatel2642@gmail.com",
-    "id": "acct-dr-muo3k3pe",
-    "name": "Fenil Patel",
+    "username": "admin",
     "password": "1234567890",
-    "role": "Doctor",
-    "username": "fenilpatel"
-  },
-  {
-    "createdAt": "2026-11-04T16:32:27.596Z",
-    "doctorId": "doc-fenil-patel",
-    "email": "fenilxpatel1234@gmail.com",
-    "id": "acct-doc-fenil-patel",
-    "name": "Fenil Patel",
-    "password": "123456",
-    "role": "Doctor",
-    "username": "fenil1"
-  },
-  {
-    "createdAt": "2026-11-05T07:56:20.667Z",
-    "doctorId": "doc-allah",
-    "email": "fenilxpatel1234@gmail.com",
-    "id": "acct-doc-allah",
-    "name": "allah",
-    "password": "123456",
-    "role": "Doctor",
-    "username": "allah"
+    "role": "Super Admin",
+    "createdAt": "2026-11-06T11:00:00.000Z"
   }
 ]

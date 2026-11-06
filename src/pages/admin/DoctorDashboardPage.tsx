@@ -13,8 +13,12 @@ import {
   ChevronRight,
   Eye,
   CheckCircle2,
+  Sun,
+  Sunset,
+  Moon,
 } from 'lucide-react';
 import { useAdminAuth } from '../../context/AdminAuthContext';
+import { formatPortalGreeting } from '../../lib/greeting';
 import {
   subscribeToDoctors,
   subscribeToAppointments,
@@ -222,10 +226,24 @@ export const DoctorDashboardPage: React.FC<DoctorDashboardPageProps> = ({
   const [scheduleViewDate, setScheduleViewDate] = useState<string>(() => toDateKey(new Date()));
   const [doctorFilterQuery, setDoctorFilterQuery] = useState<string>('');
 
-  // Redirect unauthenticated users to login
+  // Redirect unauthenticated users or non-Doctor admin sessions to Doctor Portal login
   useEffect(() => {
-    if (!authLoading && !user) {
-      onNavigateToLogin();
+    if (!authLoading) {
+      if (!user) {
+        onNavigateToLogin();
+        return;
+      }
+      const role = String((user as any).role || '').trim().toLowerCase();
+      const isDoc =
+        role === 'doctor' ||
+        role.includes('specialist') ||
+        (Boolean((user as any).doctorId) &&
+          role !== 'super admin' &&
+          role !== 'clinic admin');
+      if (!isDoc) {
+        onNavigateToLogin();
+        return;
+      }
     }
   }, [user, authLoading, onNavigateToLogin]);
 
@@ -404,6 +422,17 @@ export const DoctorDashboardPage: React.FC<DoctorDashboardPageProps> = ({
     setScheduleViewDate(toDateKey(dt));
   };
 
+  const doctorGreeting = formatPortalGreeting(
+    activeDoctor ? activeDoctor.name : sessionUserName || 'Doctor',
+    'doctor'
+  );
+  const GreetingIcon =
+    doctorGreeting.period === 'morning'
+      ? Sun
+      : doctorGreeting.period === 'afternoon'
+      ? Sunset
+      : Moon;
+
   return (
     <div className="min-h-screen bg-[#F8FAFC] flex flex-col font-sans">
       {/* Clean Responsive Top Header */}
@@ -419,8 +448,9 @@ export const DoctorDashboardPage: React.FC<DoctorDashboardPageProps> = ({
                 <span aria-hidden="true">·</span>
                 <span className="text-emerald-400 font-semibold whitespace-nowrap">Doctor Portal</span>
               </div>
-              <h1 className="text-xs sm:text-base font-bold tracking-tight truncate">
-                {activeDoctor ? activeDoctor.name : sessionUserName || 'Doctor Dashboard'}
+              <h1 className="text-xs sm:text-base font-bold tracking-tight truncate flex items-center gap-1.5">
+                <GreetingIcon className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <span className="truncate">{doctorGreeting.fullGreeting}</span>
               </h1>
             </div>
           </div>
@@ -466,11 +496,9 @@ export const DoctorDashboardPage: React.FC<DoctorDashboardPageProps> = ({
                   <span className="font-semibold text-[#1E5AFF] truncate max-w-[200px]">
                     {activeDoctor?.title || 'Dental Specialist'}
                   </span>
-                  <span aria-hidden="true">·</span>
-                  <span className="whitespace-nowrap">{doctors.length} Doctors</span>
                 </div>
                 <h2 className="text-sm sm:text-lg font-bold text-[#060C16] truncate">
-                  {activeDoctor?.name || sessionUserName || 'Doctor'}
+                  {doctorGreeting.fullGreeting}
                 </h2>
               </div>
             </div>
@@ -535,15 +563,11 @@ export const DoctorDashboardPage: React.FC<DoctorDashboardPageProps> = ({
             <div className="bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-6 shadow-xs">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
                 <div>
-                  <div className="flex items-center gap-2 text-xs font-semibold text-[#1E5AFF]">
-                    <Eye className="w-3.5 h-3.5" />
-                    <span>View Only · Clinic Doctors Schedule</span>
-                  </div>
-                  <h3 className="text-base font-bold text-[#060C16] mt-0.5">
-                    Which Doctors Are Available on {scheduleViewDate}
+                  <h3 className="text-base font-bold text-[#060C16]">
+                    Doctors Available on {scheduleViewDate}
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Read-only view of all clinic doctors (including newly added doctors) and their available times.
+                    Schedule overview of all clinic doctors and their available times.
                   </p>
                 </div>
 
@@ -648,15 +672,11 @@ export const DoctorDashboardPage: React.FC<DoctorDashboardPageProps> = ({
             <div className="bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-6 shadow-xs space-y-4">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div>
-                  <div className="flex items-center gap-2 text-xs font-semibold text-[#1E5AFF] mb-1">
-                    <Eye className="w-4 h-4" />
-                    <span>Read-Only Clinic Availability Directory</span>
-                  </div>
                   <h2 className="text-lg sm:text-xl font-bold text-[#060C16]">
                     Doctors Available on {scheduleViewDate}
                   </h2>
                   <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-                    See which doctors are available on any day and their available time slots. You can only edit your own availability.
+                    See which doctors are available on any day and their available time slots.
                   </p>
                 </div>
 

@@ -19,6 +19,7 @@ import {
 import {
   saveDoctorAvailability,
   subscribeToDoctorAvailabilities,
+  subscribeToBookingServices,
 } from '../lib/firestoreService';
 import type { Doctor } from '../types/admin';
 import {
@@ -26,6 +27,10 @@ import {
   WeeklyDaySchedule,
   DateSpecificAvailability,
   SlotDurationMinutes,
+  BookingServiceItem,
+  DEFAULT_BOOKING_SERVICES,
+  normalizeServiceKey,
+  buildDefaultServiceScheduleForDoctor,
   DAY_NAMES,
   generateTimeSlotsFromWindow,
   format24hTo12h,
@@ -151,6 +156,21 @@ export const DoctorAvailabilityManager: React.FC<DoctorAvailabilityManagerProps>
     []
   );
   const [internalSelectedDoctorId, setInternalSelectedDoctorId] = useState<string>('');
+  const [bookingServices, setBookingServices] = useState<BookingServiceItem[]>(
+    DEFAULT_BOOKING_SERVICES
+  );
+  const [selectedServiceId, setSelectedServiceId] = useState<string>('all');
+
+  useEffect(() => {
+    const unsubServices = subscribeToBookingServices((services) => {
+      if (Array.isArray(services) && services.length > 0) {
+        setBookingServices(services);
+      } else {
+        setBookingServices(DEFAULT_BOOKING_SERVICES);
+      }
+    });
+    return () => unsubServices();
+  }, []);
 
   useEffect(() => {
     if (externalAvailabilities !== undefined) return;
@@ -228,7 +248,7 @@ export const DoctorAvailabilityManager: React.FC<DoctorAvailabilityManagerProps>
     setDateCustomSlotInput('');
   }, [selectedCalendarDate]);
 
-  // Sync local state whenever selected doctor or remote availabilities change
+  // Sync local state whenever selected doctor, selected service, or remote availabilities change
   useEffect(() => {
     if (!activeDoctor) return;
     const existing = availabilities.find(
@@ -236,6 +256,35 @@ export const DoctorAvailabilityManager: React.FC<DoctorAvailabilityManagerProps>
         a.doctorId === activeDoctor.id ||
         a.doctorName.trim().toLowerCase() === activeDoctor.name.trim().toLowerCase()
     );
+
+    if (selectedServiceId !== 'all') {
+      const sKey = normalizeServiceKey(selectedServiceId);
+      const savedSvcSched = existing?.serviceAvailabilities?.[sKey];
+      const fallbackSvcSched = buildDefaultServiceScheduleForDoctor(
+        activeDoctor.id,
+        selectedServiceId
+      );
+      const targetSched = savedSvcSched || fallbackSvcSched;
+
+      const dur = (targetSched.defaultDuration || 30) as SlotDurationMinutes;
+      setDefaultDuration(dur);
+      setDraftDuration(dur);
+      const sourceWeekly =
+        targetSched.weeklySchedule && targetSched.weeklySchedule.length === 7
+          ? targetSched.weeklySchedule
+          : buildEmptyWeeklySchedule();
+      setWeeklySchedule(
+        sourceWeekly.map((w) => ({
+          ...w,
+          startTime: format24hTo12h(w.startTime || '09:00 AM'),
+          endTime: format24hTo12h(w.endTime || '05:00 PM'),
+          slots: Array.isArray(w.slots) ? [...w.slots] : [],
+        }))
+      );
+      setSpecificDates(normalizeSpecificDatesMap(targetSched.specificDates));
+      setHasUnsavedChanges(false);
+      return;
+    }
 
     if (existing) {
       setDefaultDuration(existing.defaultDuration || 30);
@@ -261,9 +310,9 @@ export const DoctorAvailabilityManager: React.FC<DoctorAvailabilityManagerProps>
       setSpecificDates({});
     }
     setHasUnsavedChanges(false);
-  }, [activeDoctor?.id, availabilities]);
+  }, [activeDoctor?.id, availabilities, selectedServiceId]);
 
-  // Persist helper so doctors can save immediately
+  // Persist helper so doctors/admins can save immediately (either general or service-specific)
   const persistAvailabilityNow = async (
     nextWeekly = weeklySchedule,
     nextSpecific = specificDates,
@@ -275,15 +324,51 @@ export const DoctorAvailabilityManager: React.FC<DoctorAvailabilityManagerProps>
     setFeedback(null);
 
     try {
-      const record: DoctorAvailabilityRecord = {
-        doctorId: activeDoctor.id,
-        doctorName: activeDoctor.name,
-        defaultDuration: nextDuration,
-        recurringWeekly: nextWeekly,
-        weeklySchedule: nextWeekly,
-        specificDates: nextSpecific,
-        updatedAt: new Date().toISOString(),
-      };
+      const existing = availabilities.find(
+        (a) =>
+          a.doctorId === activeDoctor.id ||
+          a.doctorName.trim().toLowerCase() === activeDoctor.name.trim().toLowerCase()
+      );
+
+      let record: DoctorAvailabilityRecord & { serviceId?: string };
+
+      if (selectedServiceId !== 'all') {
+        const sKey = normalizeServiceKey(selectedServiceId);
+        const nextServiceAvailabilities = {
+          ...(existing?.serviceAvailabilities || {}),
+          [sKey]: {
+            serviceId: selectedServiceId,
+            defaultDuration: nextDuration,
+            weeklySchedule: nextWeekly,
+            specificDates: nextSpecific,
+            updatedAt: new Date().toISOString(),
+          },
+        };
+
+        record = {
+          doctorId: activeDoctor.id,
+          doctorName: activeDoctor.name,
+          defaultDuration: existing?.defaultDuration || nextDuration,
+          recurringWeekly: existing?.recurringWeekly || existing?.weeklySchedule || nextWeekly,
+          weeklySchedule: existing?.weeklySchedule || nextWeekly,
+          specificDates: existing?.specificDates || {},
+          serviceAvailabilities: nextServiceAvailabilities,
+          serviceId: selectedServiceId,
+          updatedAt: new Date().toISOString(),
+        };
+      } else {
+        record = {
+          doctorId: activeDoctor.id,
+          doctorName: activeDoctor.name,
+          defaultDuration: nextDuration,
+          recurringWeekly: nextWeekly,
+          weeklySchedule: nextWeekly,
+          specificDates: nextSpecific,
+          serviceAvailabilities: existing?.serviceAvailabilities || {},
+          serviceId: 'all',
+          updatedAt: new Date().toISOString(),
+        };
+      }
 
       await saveDoctorAvailability(
         record,
@@ -291,11 +376,13 @@ export const DoctorAvailabilityManager: React.FC<DoctorAvailabilityManagerProps>
       );
       setHasUnsavedChanges(false);
       if (onSaved) onSaved(record);
+      const serviceLabel =
+        selectedServiceId === 'all' ? 'General Schedule' : `"${selectedServiceId}"`;
       setFeedback({
         type: 'success',
         message:
           customMessage ||
-          `Saved availability for ${activeDoctor.name}. Live across Patient Booking & Portals.`,
+          `Saved ${serviceLabel} availability for ${activeDoctor.name}. Live across Patient Booking & Portals.`,
       });
       setTimeout(() => setFeedback(null), 5000);
     } catch (err: any) {
@@ -638,15 +725,6 @@ export const DoctorAvailabilityManager: React.FC<DoctorAvailabilityManagerProps>
       <div className="bg-white rounded-2xl border border-slate-200/90 p-4 sm:p-6 shadow-xs">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-[#1E5AFF] mb-1">
-              <CalendarIcon className="w-4 h-4" />
-              <span>Manage Appointment Availability</span>
-              <span aria-hidden="true">·</span>
-              <span className="text-slate-500 font-medium">
-                {configuredAvailableDatesList.length} custom date{configuredAvailableDatesList.length === 1 ? '' : 's'}
-                {enabledWeeklyCount > 0 ? ` · ${enabledWeeklyCount} weekly day${enabledWeeklyCount === 1 ? '' : 's'}` : ''}
-              </span>
-            </div>
             <h2 className="text-lg sm:text-xl font-bold text-[#060C16] tracking-tight">
               {activeDoctor.name} — Schedule &amp; Available Time Slots
             </h2>
@@ -686,33 +764,57 @@ export const DoctorAvailabilityManager: React.FC<DoctorAvailabilityManagerProps>
           </div>
         </div>
 
-        {/* Doctor Switcher (Shown in Admin Portal when allowDoctorSwitch is true) */}
-        {allowDoctorSwitch && doctors.length > 1 && (
-          <div className="mt-4 pt-4 border-t border-slate-100">
-            <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">
-              Select Doctor to Manage Schedule
-            </p>
-            <div className="flex items-center gap-2 overflow-x-auto pb-1">
-              {doctors.map((doc) => {
-                const isSelected = doc.id === currentDoctorId;
-                return (
-                  <button
-                    key={doc.id}
-                    type="button"
-                    onClick={() => handleSelectDoctor(doc.id)}
-                    className={`px-3.5 py-2 min-h-[40px] rounded-xl text-xs font-bold whitespace-nowrap transition-all border cursor-pointer ${
-                      isSelected
-                        ? 'bg-[#060C16] text-white border-[#060C16]'
-                        : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    {doc.name}
-                  </button>
-                );
-              })}
+        {/* Doctor Switcher & Service-Specific Schedule Selector */}
+        <div className="mt-4 pt-4 border-t border-slate-100 grid grid-cols-1 lg:grid-cols-12 gap-4 items-end">
+          {allowDoctorSwitch && doctors.length > 1 && (
+            <div className="lg:col-span-6">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">
+                1. Select Doctor to Manage Schedule
+              </p>
+              <div className="flex items-center gap-2 overflow-x-auto pb-1">
+                {doctors.map((doc) => {
+                  const isSelected = doc.id === currentDoctorId;
+                  return (
+                    <button
+                      key={doc.id}
+                      type="button"
+                      onClick={() => handleSelectDoctor(doc.id)}
+                      className={`px-3.5 py-2 min-h-[40px] rounded-xl text-xs font-bold whitespace-nowrap transition-all border cursor-pointer ${
+                        isSelected
+                          ? 'bg-[#060C16] text-white border-[#060C16]'
+                          : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {doc.name}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
+          )}
+
+          <div className={allowDoctorSwitch && doctors.length > 1 ? 'lg:col-span-6' : 'lg:col-span-12'}>
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <label className="text-[11px] font-bold uppercase tracking-wider text-[#1E5AFF]">
+                {allowDoctorSwitch && doctors.length > 1
+                  ? '2. Dental Service / Reason'
+                  : 'Dental Service / Reason'}
+              </label>
+            </div>
+            <select
+              value={selectedServiceId}
+              onChange={(e) => setSelectedServiceId(e.target.value)}
+              className="w-full px-3.5 py-2.5 min-h-[42px] rounded-xl border border-[#DCE6FF] bg-[#F8FAFF] text-xs font-bold text-[#002156] focus:outline-none focus:border-[#1E5AFF] cursor-pointer"
+            >
+              <option value="all">All Services (General Base Schedule)</option>
+              {bookingServices.map((svc) => (
+                <option key={svc.id} value={svc.title}>
+                  Service Schedule: {svc.title} ({svc.durationMinutes || 45} mins)
+                </option>
+              ))}
+            </select>
           </div>
-        )}
+        </div>
 
         {/* Feedback Banner */}
         {feedback && (
@@ -914,15 +1016,15 @@ export const DoctorAvailabilityManager: React.FC<DoctorAvailabilityManagerProps>
             <div className="mt-4 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-4 text-[11px] text-slate-600">
               <span className="inline-flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-                Available Date Added
+                Available Date
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-[#1E5AFF]" />
-                Weekly Schedule Active
+                Weekly Hours
               </span>
               <span className="inline-flex items-center gap-1.5">
                 <span className="w-2.5 h-2.5 rounded-full bg-slate-300" />
-                No Availability Set
+                No Availability
               </span>
             </div>
 

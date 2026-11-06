@@ -126,22 +126,6 @@ export default function ContactSection({ onBookClick }: ContactSectionProps) {
         message: formData.message.trim(),
       });
 
-      try {
-        await fetch("/api/enquiries", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: fullName,
-            email: formData.email.trim() || "firstavenuedentistry@gmail.com",
-            phone: formData.phone.trim(),
-            service: formData.service,
-            message: formData.message.trim(),
-          }),
-        });
-      } catch (emailErr) {
-        console.warn("Enquiry email dispatch warning:", emailErr);
-      }
-
       setIsSubmitted(true);
     } catch (err) {
       console.error("Enquiry submission error:", err);

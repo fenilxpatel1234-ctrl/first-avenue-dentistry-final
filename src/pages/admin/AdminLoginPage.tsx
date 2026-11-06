@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import {
   Lock,
   ShieldCheck,
@@ -11,9 +11,11 @@ import {
   Mail,
   RefreshCw,
   Stethoscope,
-  CalendarClock,
+  Fingerprint,
+  X,
 } from 'lucide-react';
 import { useAdminAuth, AdminUserSession } from '../../context/AdminAuthContext';
+import { registerPasskeyOnDevice } from '../../lib/passkeyService';
 
 interface AdminLoginPageProps {
   onNavigateToAdmin: () => void;
@@ -22,7 +24,26 @@ interface AdminLoginPageProps {
   initialMode?: 'admin' | 'doctor';
 }
 
-type AuthStep = 'credentials' | 'login_otp' | 'forgot_request' | 'forgot_verify';
+type AuthStep =
+  | 'credentials'
+  | 'login_otp'
+  | 'passkey_prompt'
+  | 'forgot_request'
+  | 'forgot_verify';
+
+function isDoctorSession(session: AdminUserSession | null | undefined): boolean {
+  if (!session) return false;
+  const role = String(session.role || '').trim().toLowerCase();
+  if (
+    role === 'super admin' ||
+    role === 'clinic admin' ||
+    role.includes('receptionist') ||
+    role.includes('coordinator')
+  ) {
+    return false;
+  }
+  return role === 'doctor' || role.includes('specialist') || Boolean(session.doctorId);
+}
 
 export default function AdminLoginPage({
   onNavigateToAdmin,
@@ -34,24 +55,26 @@ export default function AdminLoginPage({
     user,
     loading,
     signInWithCredentials,
+    signInWithPasskey,
     verifyLoginOtp,
     resendLoginOtp,
     requestPasswordResetOtp,
     resetPasswordWithOtp,
   } = useAdminAuth();
 
-  const [portalMode, setPortalMode] = useState<'admin' | 'doctor'>(initialMode);
+  const portalMode: 'admin' | 'doctor' = initialMode === 'doctor' ? 'doctor' : 'admin';
   const [step, setStep] = useState<AuthStep>('credentials');
 
-  // Unified Login Credentials State (Email/Username + Password)
+  // Login Credentials State (Email/Username + Password)
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
 
-  // Mandatory 2FA Login OTP State
+  // Access Code State
   const [loginTargetEmail, setLoginTargetEmail] = useState('');
   const [loginMaskedEmail, setLoginMaskedEmail] = useState('');
   const [loginAdminName, setLoginAdminName] = useState('');
   const [loginOtpCode, setLoginOtpCode] = useState('');
+  const [verifiedSessionUser, setVerifiedSessionUser] = useState<AdminUserSession | null>(null);
 
   // Forgot / Reset Password State
   const [resetIdentifier, setResetIdentifier] = useState('');
@@ -63,14 +86,12 @@ export default function AdminLoginPage({
 
   // Status & Feedback State
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isPasskeyLoading, setIsPasskeyLoading] = useState(false);
+  const [isSavingFirstPasskey, setIsSavingFirstPasskey] = useState(false);
   const [isResending, setIsResending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [idleTimedOut, setIdleTimedOut] = useState(false);
-
-  useEffect(() => {
-    setPortalMode(initialMode);
-  }, [initialMode]);
 
   useEffect(() => {
     if (sessionStorage.getItem('admin_idle_timeout') === 'true') {
@@ -101,19 +122,28 @@ export default function AdminLoginPage({
     };
   }, []);
 
-  // Redirect to appropriate dashboard if already signed in
+  const proceedToPortal = () => {
+    if (portalMode === 'doctor' && onNavigateToDoctor) {
+      onNavigateToDoctor();
+    } else {
+      onNavigateToAdmin();
+    }
+  };
+
+  // Only redirect if already signed in prior to starting the login flow (never interrupt passkey_prompt)
   useEffect(() => {
-    if (!loading && user) {
+    if (!loading && user && step === 'credentials' && !isSubmitting && !isPasskeyLoading) {
       const sessionUser = user as AdminUserSession;
-      if ((sessionUser.role === 'Doctor' || sessionUser.doctorId) && onNavigateToDoctor) {
+      const isDoc = isDoctorSession(sessionUser);
+      if (portalMode === 'doctor' && isDoc && onNavigateToDoctor) {
         onNavigateToDoctor();
-      } else {
+      } else if (portalMode === 'admin' && !isDoc) {
         onNavigateToAdmin();
       }
     }
-  }, [user, loading, onNavigateToAdmin, onNavigateToDoctor]);
+  }, [user, loading, step, isSubmitting, isPasskeyLoading, portalMode, onNavigateToAdmin, onNavigateToDoctor]);
 
-  // Step 1: Validate Username/Email + Password -> Triggers Mandatory 2FA OTP Email (Same for both Admin & Doctor)
+  // Step 1: Validate Username/Email + Password
   const handleCredentialsSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanIdent = identifier.trim();
@@ -141,15 +171,10 @@ export default function AdminLoginPage({
         setLoginOtpCode('');
         setStep('login_otp');
         setSuccessMessage(
-          challenge.message || `6-digit 2FA passcode dispatched to ${challenge.maskedEmail}.`
+          challenge.message || `Please enter the 6-digit access code sent to ${challenge.maskedEmail}.`
         );
-      } else if (
-        (challenge.role === 'Doctor' || challenge.doctorId || portalMode === 'doctor') &&
-        onNavigateToDoctor
-      ) {
-        onNavigateToDoctor();
       } else {
-        onNavigateToAdmin();
+        proceedToPortal();
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -164,12 +189,29 @@ export default function AdminLoginPage({
     }
   };
 
-  // Step 2: Verify Mandatory 2FA Login OTP -> Route to Doctor Portal or Admin Portal
+  // Direct Passkey Sign-In (Bypasses email access code step)
+  const handlePasskeySignIn = async () => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+    setIsPasskeyLoading(true);
+
+    try {
+      await signInWithPasskey(portalMode, identifier.trim());
+      proceedToPortal();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setErrorMessage(msg || 'Passkey sign-in could not be completed.');
+    } finally {
+      setIsPasskeyLoading(false);
+    }
+  };
+
+  // Step 2: Verify Access Code -> If first-time login (no saved passkey), trigger Google Passkey browser notification prompt
   const handleVerifyLoginOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanOtp = loginOtpCode.replace(/\D/g, '').trim();
     if (cleanOtp.length !== 6) {
-      setErrorMessage('Please enter the 6-digit verification code sent to your email.');
+      setErrorMessage('Please enter the 6-digit access code sent to your email.');
       return;
     }
 
@@ -177,24 +219,56 @@ export default function AdminLoginPage({
     setIsSubmitting(true);
 
     try {
-      const sessionUser = await verifyLoginOtp(loginTargetEmail, cleanOtp);
-      if (
-        (sessionUser.role === 'Doctor' || sessionUser.doctorId || portalMode === 'doctor') &&
-        onNavigateToDoctor
-      ) {
-        onNavigateToDoctor();
+      const sessionUser = await verifyLoginOtp(loginTargetEmail, cleanOtp, portalMode);
+      setVerifiedSessionUser(sessionUser);
+
+      if (!sessionUser.hasPasskey) {
+        // Trigger browser notification if permitted + show Google Passkey Manager browser prompt
+        try {
+          if (typeof window !== 'undefined' && 'Notification' in window) {
+            if (Notification.permission === 'granted') {
+              new Notification('Google Password Manager • Save Passkey', {
+                body: `Save a passkey for ${sessionUser.displayName || sessionUser.username} on First Avenue Dentistry for 1-click sign-in.`,
+              });
+            } else if (Notification.permission === 'default') {
+              Notification.requestPermission().catch(() => {});
+            }
+          }
+        } catch {}
+
+        setSuccessMessage(null);
+        setErrorMessage(null);
+        setStep('passkey_prompt');
       } else {
-        onNavigateToAdmin();
+        proceedToPortal();
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      setErrorMessage(msg || 'Incorrect or expired verification code.');
+      setErrorMessage(msg || 'Incorrect or expired access code.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  // Resend 2FA Login OTP
+  // Save Google-style Passkey on First Login
+  const handleCreateGooglePasskeyOnFirstLogin = async () => {
+    setIsSavingFirstPasskey(true);
+    setErrorMessage(null);
+    try {
+      await registerPasskeyOnDevice();
+      proceedToPortal();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setErrorMessage(msg || 'Could not save passkey. Entering portal...');
+      setTimeout(() => {
+        proceedToPortal();
+      }, 1200);
+    } finally {
+      setIsSavingFirstPasskey(false);
+    }
+  };
+
+  // Resend Access Code
   const handleResendLoginOtp = async () => {
     if (!loginTargetEmail) return;
     setIsResending(true);
@@ -205,13 +279,13 @@ export default function AdminLoginPage({
       setSuccessMessage(res.message);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      setErrorMessage(msg || 'Failed to resend OTP.');
+      setErrorMessage(msg || 'Failed to resend access code.');
     } finally {
       setIsResending(false);
     }
   };
 
-  // Forgot Password Step 1: Request Reset OTP
+  // Forgot Password Step 1: Request Reset Code
   const handleRequestPasswordReset = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanIdent = resetIdentifier.trim();
@@ -243,12 +317,12 @@ export default function AdminLoginPage({
     }
   };
 
-  // Forgot Password Step 2: Verify OTP & Set New Password
+  // Forgot Password Step 2: Verify Code & Set New Password
   const handleConfirmPasswordReset = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanOtp = resetOtpCode.replace(/\D/g, '').trim();
     if (cleanOtp.length !== 6) {
-      setErrorMessage('Please enter the 6-digit password reset OTP from your email.');
+      setErrorMessage('Please enter the 6-digit password reset code from your email.');
       return;
     }
     if (newPassword.trim().length < 6) {
@@ -287,6 +361,132 @@ export default function AdminLoginPage({
       <div className="absolute top-0 right-1/4 w-[500px] h-[500px] bg-[#1E5AFF]/10 rounded-full blur-[140px] pointer-events-none" />
       <div className="absolute bottom-0 left-1/4 w-[400px] h-[400px] bg-[#0452FF]/5 rounded-full blur-[120px] pointer-events-none" />
 
+      {/* GOOGLE CHROME / GOOGLE PASSWORD MANAGER BROWSER NOTIFICATION BUBBLE ON FIRST-TIME LOGIN */}
+      <AnimatePresence>
+        {step === 'passkey_prompt' && (
+          <motion.div
+            initial={{ opacity: 0, y: -24, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -20, scale: 0.96 }}
+            transition={{ duration: 0.25 }}
+            className="fixed top-4 right-4 sm:top-5 sm:right-6 z-50 w-[calc(100vw-2rem)] max-w-[380px] rounded-2xl bg-[#202124] text-[#E8EAED] border border-[#3C4043] shadow-[0_12px_40px_rgba(0,0,0,0.65)] p-5 font-sans"
+            role="dialog"
+            aria-labelledby="google-passkey-prompt-title"
+          >
+            {/* Top Bar: Google Logo + Google Password Manager Title + Close */}
+            <div className="flex items-center justify-between gap-2 pb-3 border-b border-[#3C4043]">
+              <div className="flex items-center gap-2.5">
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    fill="#4285F4"
+                    d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47c-.29 1.48-1.14 2.73-2.4 3.58v3h3.86c2.26-2.09 3.56-5.17 3.56-8.82z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.86-3c-1.08.72-2.45 1.16-4.07 1.16-3.13 0-5.78-2.11-6.73-4.96H1.29v3.09C3.26 21.3 7.31 24 12 24z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.27 14.29c-.25-.72-.38-1.49-.38-2.29s.13-1.57.38-2.29V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.98-3.09z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.98 3.09c.95-2.85 3.6-4.96 6.73-4.96z"
+                  />
+                </svg>
+                <span className="text-xs font-medium text-[#E8EAED] tracking-tight">
+                  Google Password Manager
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={proceedToPortal}
+                disabled={isSavingFirstPasskey}
+                className="p-1 rounded-full text-[#9AA0A6] hover:text-white hover:bg-[#303134] transition-colors cursor-pointer"
+                title="Dismiss"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="pt-4 space-y-3.5">
+              <div className="flex items-start gap-3.5">
+                <div className="w-10 h-10 rounded-full bg-[#8AB4F8]/15 border border-[#8AB4F8]/30 flex items-center justify-center shrink-0 mt-0.5">
+                  <Fingerprint className="w-5 h-5 text-[#8AB4F8]" />
+                </div>
+                <div className="space-y-1">
+                  <h2
+                    id="google-passkey-prompt-title"
+                    className="text-sm font-semibold text-white leading-snug"
+                  >
+                    Sign in faster with a passkey?
+                  </h2>
+                  <p className="text-xs text-[#9AA0A6] leading-relaxed">
+                    With a passkey, you can sign in to{' '}
+                    <span className="text-[#E8EAED] font-medium">First Avenue Dentistry</span> using
+                    your fingerprint, face, or screen lock — without needing a password or access
+                    code.
+                  </p>
+                </div>
+              </div>
+
+              {/* Account Pill */}
+              <div className="flex items-center gap-3 p-3 rounded-xl bg-[#303134] border border-[#3C4043]">
+                <div className="w-8 h-8 rounded-full bg-[#1E5AFF] text-white flex items-center justify-center text-xs font-bold shrink-0">
+                  {(
+                    verifiedSessionUser?.displayName ||
+                    verifiedSessionUser?.username ||
+                    loginAdminName ||
+                    'S'
+                  )
+                    .charAt(0)
+                    .toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-semibold text-white truncate">
+                    {verifiedSessionUser?.displayName || loginAdminName || 'Staff Account'}
+                  </div>
+                  <div className="text-[11px] text-[#9AA0A6] truncate">
+                    {verifiedSessionUser?.username
+                      ? `@${verifiedSessionUser.username} • ${verifiedSessionUser.email || loginTargetEmail}`
+                      : loginTargetEmail}
+                  </div>
+                </div>
+                <KeyRound className="w-4 h-4 text-[#8AB4F8] shrink-0" />
+              </div>
+
+              {/* Action Buttons (Google Chrome Dialog Style) */}
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={proceedToPortal}
+                  disabled={isSavingFirstPasskey}
+                  className="px-4 py-2 rounded-full border border-[#5F6368] hover:bg-[#303134] text-[#8AB4F8] text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  Not now
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateGooglePasskeyOnFirstLogin}
+                  disabled={isSavingFirstPasskey}
+                  className="px-4 py-2 rounded-full bg-[#8AB4F8] hover:bg-[#AECBFA] text-[#202124] text-xs font-semibold transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-60 shadow-sm"
+                >
+                  {isSavingFirstPasskey ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-[#202124]/30 border-t-[#202124] rounded-full animate-spin" />
+                      <span>Saving passkey...</span>
+                    </>
+                  ) : (
+                    <span>Create a passkey</span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Top Header */}
       <header className="relative z-10 w-full max-w-6xl mx-auto flex items-center justify-between">
         <button
@@ -297,11 +497,6 @@ export default function AdminLoginPage({
           <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
           <span>Return to Public Website</span>
         </button>
-
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[11px] text-[#8E8E93]">
-          <ShieldCheck className="w-3.5 h-3.5 text-[#1E5AFF]" />
-          <span>{portalMode === 'doctor' ? 'Doctor Portal (2FA)' : 'Clinical Admin Portal (2FA)'}</span>
-        </div>
       </header>
 
       {/* Main Content Card */}
@@ -325,57 +520,22 @@ export default function AdminLoginPage({
             <div>
               <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
                 {step === 'login_otp'
-                  ? 'Two-Factor Verification'
+                  ? 'Identity Confirmation'
+                  : step === 'passkey_prompt'
+                  ? 'Save Passkey to Browser'
                   : step === 'forgot_request' || step === 'forgot_verify'
                   ? 'Reset Portal Password'
                   : portalMode === 'doctor'
                   ? 'First Avenue Dentistry Doctor Portal'
-                  : 'First Avenue Dentistry Admin'}
+                  : 'First Avenue Dentistry Admin Portal'}
               </h1>
               <p className="text-xs text-[#8E8E93] mt-1">
-                First Avenue Family Dentistry • St. Thomas, ON
+                {portalMode === 'doctor'
+                  ? 'Specialist & Doctor Schedule Portal • St. Thomas, ON'
+                  : 'Clinical Administration & Staff Portal • St. Thomas, ON'}
               </p>
             </div>
           </div>
-
-          {/* Portal Role Mode Switcher (Doctor vs Admin) */}
-          {step === 'credentials' && (
-            <div className="grid grid-cols-2 gap-1.5 p-1 rounded-2xl bg-white/5 border border-white/10">
-              <button
-                type="button"
-                onClick={() => {
-                  setPortalMode('doctor');
-                  setErrorMessage(null);
-                  setSuccessMessage(null);
-                }}
-                className={`py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                  portalMode === 'doctor'
-                    ? 'bg-[#1E5AFF] text-white shadow-md'
-                    : 'text-[#8E8E93] hover:text-white'
-                }`}
-              >
-                <Stethoscope className="w-3.5 h-3.5" />
-                <span>Doctor Login (2FA)</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setPortalMode('admin');
-                  setErrorMessage(null);
-                  setSuccessMessage(null);
-                }}
-                className={`py-2.5 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                  portalMode === 'admin'
-                    ? 'bg-[#1E5AFF] text-white shadow-md'
-                    : 'text-[#8E8E93] hover:text-white'
-                }`}
-              >
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span>Admin Login (2FA)</span>
-              </button>
-            </div>
-          )}
 
           {idleTimedOut && step === 'credentials' && (
             <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 flex items-start gap-2.5">
@@ -403,98 +563,126 @@ export default function AdminLoginPage({
             </div>
           )}
 
-          {/* ================= UNIFIED 2FA CREDENTIALS STEP (DOCTOR & ADMIN) ================= */}
+          {/* ================= CREDENTIALS & PASSKEY STEP ================= */}
           {step === 'credentials' && (
-            <form onSubmit={handleCredentialsSignIn} className="space-y-4">
-
-              <div className="space-y-1.5">
-                <label className="block text-[11px] font-semibold text-[#8E8E93]">
-                  Email or Username
-                </label>
-                <div className="relative">
-                  <User className="w-4 h-4 text-[#8E8E93] absolute left-3.5 top-3" />
-                  <input
-                    type="text"
-                    required
-                    value={identifier}
-                    onChange={(e) => setIdentifier(e.target.value)}
-                    placeholder={
-                      portalMode === 'doctor'
-                        ? 'Enter doctor email or username'
-                        : 'Enter email or username'
-                    }
-                    className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-[#1E5AFF] focus:ring-1 focus:ring-[#1E5AFF] transition-all"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
+            <div className="space-y-4">
+              <form onSubmit={handleCredentialsSignIn} className="space-y-4">
+                <div className="space-y-1.5">
                   <label className="block text-[11px] font-semibold text-[#8E8E93]">
-                    Password
+                    {portalMode === 'doctor' ? 'Doctor Email or Username' : 'Admin Email or Username'}
                   </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setResetIdentifier(identifier);
-                      setErrorMessage(null);
-                      setSuccessMessage(null);
-                      setStep('forgot_request');
-                    }}
-                    className="text-[11px] font-semibold text-[#1E5AFF] hover:text-white transition-colors cursor-pointer"
-                  >
-                    Forgot / Reset Password?
-                  </button>
+                  <div className="relative">
+                    <User className="w-4 h-4 text-[#8E8E93] absolute left-3.5 top-3" />
+                    <input
+                      type="text"
+                      required
+                      value={identifier}
+                      onChange={(e) => setIdentifier(e.target.value)}
+                      placeholder={
+                        portalMode === 'doctor'
+                          ? 'Enter doctor email or username'
+                          : 'Enter admin email or username'
+                      }
+                      className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-[#1E5AFF] focus:ring-1 focus:ring-[#1E5AFF] transition-all"
+                    />
+                  </div>
                 </div>
-                <div className="relative">
-                  <KeyRound className="w-4 h-4 text-[#8E8E93] absolute left-3.5 top-3" />
-                  <input
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter password"
-                    className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-[#1E5AFF] focus:ring-1 focus:ring-[#1E5AFF] transition-all"
-                  />
+
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-[11px] font-semibold text-[#8E8E93]">
+                      Password
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setResetIdentifier(identifier);
+                        setErrorMessage(null);
+                        setSuccessMessage(null);
+                        setStep('forgot_request');
+                      }}
+                      className="text-[11px] font-semibold text-[#1E5AFF] hover:text-white transition-colors cursor-pointer"
+                    >
+                      Forgot / Reset Password?
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <KeyRound className="w-4 h-4 text-[#8E8E93] absolute left-3.5 top-3" />
+                    <input
+                      type="password"
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Enter password"
+                      className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-[#1E5AFF] focus:ring-1 focus:ring-[#1E5AFF] transition-all"
+                    />
+                  </div>
                 </div>
+
+                <button
+                  type="submit"
+                  disabled={isSubmitting || isPasskeyLoading || loading}
+                  className="w-full mt-2 py-3.5 px-4 rounded-xl bg-[#1E5AFF] hover:bg-[#0050E6] text-white font-bold text-xs tracking-wide transition-all duration-200 shadow-md shadow-[#1E5AFF]/25 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                >
+                  {isSubmitting ? (
+                    <>
+                      <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      <span>Signing In...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-4 h-4" />
+                      <span>Login</span>
+                    </>
+                  )}
+                </button>
+              </form>
+
+              <div className="relative flex items-center py-1">
+                <div className="flex-grow border-t border-white/10" />
+                <span className="flex-shrink mx-3 text-[10px] font-semibold uppercase tracking-widest text-[#8E8E93]">
+                  or instant passkey
+                </span>
+                <div className="flex-grow border-t border-white/10" />
               </div>
 
               <button
-                type="submit"
-                disabled={isSubmitting || loading}
-                className="w-full mt-2 py-3.5 px-4 rounded-xl bg-[#1E5AFF] hover:bg-[#0050E6] text-white font-bold text-xs tracking-wide transition-all duration-200 shadow-md shadow-[#1E5AFF]/25 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+                type="button"
+                onClick={handlePasskeySignIn}
+                disabled={isPasskeyLoading || isSubmitting || loading}
+                className="w-full py-3 px-4 rounded-xl bg-white/5 hover:bg-white/10 border border-white/15 hover:border-[#1E5AFF]/60 text-white font-semibold text-xs tracking-wide transition-all duration-200 flex items-center justify-center gap-2.5 cursor-pointer disabled:opacity-60"
               >
-                {isSubmitting ? (
+                {isPasskeyLoading ? (
                   <>
                     <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>Sending 2FA Code to Email...</span>
+                    <span>Authenticating Passkey...</span>
                   </>
                 ) : (
                   <>
-                    <ShieldCheck className="w-4 h-4" />
-                    <span>Continue with 2FA Verification</span>
+                    <Fingerprint className="w-4 h-4 text-[#1E5AFF]" />
+                    <span>Sign in with a Passkey</span>
                   </>
                 )}
               </button>
-            </form>
+            </div>
           )}
 
-          {/* VIEW 2: MANDATORY 2FA LOGIN OTP VERIFICATION */}
+          {/* VIEW 2: ACCESS CODE CONFIRMATION */}
           {step === 'login_otp' && (
             <form onSubmit={handleVerifyLoginOtp} className="space-y-4">
               <div className="p-3 rounded-xl bg-[#1E5AFF]/10 border border-[#1E5AFF]/30 text-xs text-white/90 space-y-1">
                 <div className="font-bold text-white flex items-center gap-2">
                   <Mail className="w-3.5 h-3.5 text-[#1E5AFF]" />
-                  <span>Passcode Sent for {loginAdminName}</span>
+                  <span>Access Code Sent for {loginAdminName}</span>
                 </div>
                 <p className="text-[11px] text-[#A1A1A8]">
-                  Check <strong className="text-white">{loginMaskedEmail}</strong> for your 6-digit login security code.
+                  Check <strong className="text-white">{loginMaskedEmail}</strong> for your 6-digit access code.
                 </p>
               </div>
 
               <div className="space-y-1.5">
                 <label className="block text-[11px] font-semibold text-[#8E8E93]">
-                  6-Digit Security OTP Code
+                  6-Digit Access Code
                 </label>
                 <input
                   type="text"
@@ -517,15 +705,15 @@ export default function AdminLoginPage({
                 {isSubmitting ? (
                   <>
                     <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>Verifying 2FA Code...</span>
+                    <span>Verifying Access Code...</span>
                   </>
                 ) : (
                   <>
                     <CheckCircle2 className="w-4 h-4" />
                     <span>
                       {portalMode === 'doctor'
-                        ? 'Verify OTP & Enter Doctor Portal'
-                        : 'Verify OTP & Enter Admin Portal'}
+                        ? 'Verify & Enter Doctor Portal'
+                        : 'Verify & Enter Admin Portal'}
                     </span>
                   </>
                 )}
@@ -552,18 +740,67 @@ export default function AdminLoginPage({
                   className="text-[#1E5AFF] hover:text-white font-semibold cursor-pointer flex items-center gap-1 disabled:opacity-50"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${isResending ? 'animate-spin' : ''}`} />
-                  <span>{isResending ? 'Sending...' : 'Resend OTP'}</span>
+                  <span>{isResending ? 'Sending...' : 'Resend Code'}</span>
                 </button>
               </div>
             </form>
           )}
 
-          {/* VIEW 3: FORGOT PASSWORD STEP 1 (REQUEST OTP) */}
+          {/* VIEW 2B: FIRST-TIME LOGIN GOOGLE PASSKEY PROMPT STATE */}
+          {step === 'passkey_prompt' && (
+            <div className="space-y-4">
+              <div className="p-4 rounded-2xl bg-white/5 border border-white/10 space-y-2.5 text-center">
+                <div className="w-12 h-12 rounded-full bg-[#1E5AFF]/15 border border-[#1E5AFF]/30 flex items-center justify-center mx-auto">
+                  <Fingerprint className="w-6 h-6 text-[#1E5AFF]" />
+                </div>
+                <h3 className="text-sm font-bold text-white">
+                  Save Your Passkey in Google Password Manager
+                </h3>
+                <p className="text-xs text-[#A1A1A8] leading-relaxed">
+                  Use the browser prompt in the top-right corner or click below to save a passkey for{' '}
+                  <strong className="text-white">
+                    {verifiedSessionUser?.displayName || loginAdminName}
+                  </strong>
+                  . Next time you can sign in directly with a single click.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleCreateGooglePasskeyOnFirstLogin}
+                disabled={isSavingFirstPasskey}
+                className="w-full py-3.5 px-4 rounded-xl bg-[#1E5AFF] hover:bg-[#0050E6] text-white font-bold text-xs tracking-wide transition-all duration-200 shadow-md shadow-[#1E5AFF]/25 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60"
+              >
+                {isSavingFirstPasskey ? (
+                  <>
+                    <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span>Saving Passkey...</span>
+                  </>
+                ) : (
+                  <>
+                    <Fingerprint className="w-4 h-4" />
+                    <span>Create a Passkey &amp; Continue</span>
+                  </>
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={proceedToPortal}
+                disabled={isSavingFirstPasskey}
+                className="w-full py-2.5 px-4 rounded-xl bg-white/5 hover:bg-white/10 text-[#8E8E93] hover:text-white font-semibold text-xs transition-colors cursor-pointer"
+              >
+                Skip for now &amp; Enter Portal
+              </button>
+            </div>
+          )}
+
+          {/* VIEW 3: FORGOT PASSWORD STEP 1 */}
           {step === 'forgot_request' && (
             <form onSubmit={handleRequestPasswordReset} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="block text-[11px] font-semibold text-[#8E8E93]">
-                  Administrator Username or Email
+                  Username or Registered Email
                 </label>
                 <div className="relative">
                   <Mail className="w-4 h-4 text-[#8E8E93] absolute left-3.5 top-3" />
@@ -573,7 +810,7 @@ export default function AdminLoginPage({
                     autoFocus
                     value={resetIdentifier}
                     onChange={(e) => setResetIdentifier(e.target.value)}
-                    placeholder="e.g. fenil or fenilxpatel2642@gmail.com"
+                    placeholder="Enter username or email"
                     className="w-full pl-10 pr-3.5 py-2.5 rounded-xl bg-white/5 border border-white/10 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-[#1E5AFF] focus:ring-1 focus:ring-[#1E5AFF] transition-all"
                   />
                 </div>
@@ -587,12 +824,12 @@ export default function AdminLoginPage({
                 {isSubmitting ? (
                   <>
                     <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    <span>Sending Reset OTP to Gmail...</span>
+                    <span>Sending Reset Code...</span>
                   </>
                 ) : (
                   <>
                     <Mail className="w-4 h-4" />
-                    <span>Send 6-Digit Reset OTP</span>
+                    <span>Send 6-Digit Reset Code</span>
                   </>
                 )}
               </button>
@@ -608,18 +845,18 @@ export default function AdminLoginPage({
                   className="text-xs text-[#8E8E93] hover:text-white font-semibold cursor-pointer inline-flex items-center gap-1"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Return to Sign In</span>
+                  <span>Return to Login</span>
                 </button>
               </div>
             </form>
           )}
 
-          {/* VIEW 4: FORGOT PASSWORD STEP 2 (VERIFY OTP & SET NEW PASSWORD) */}
+          {/* VIEW 4: FORGOT PASSWORD STEP 2 */}
           {step === 'forgot_verify' && (
             <form onSubmit={handleConfirmPasswordReset} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="block text-[11px] font-semibold text-[#8E8E93]">
-                  6-Digit Reset OTP (Sent to {resetMaskedEmail})
+                  6-Digit Reset Code (Sent to {resetMaskedEmail})
                 </label>
                 <input
                   type="text"
@@ -636,7 +873,7 @@ export default function AdminLoginPage({
 
               <div className="space-y-1.5">
                 <label className="block text-[11px] font-semibold text-[#8E8E93]">
-                  New Administrator Password
+                  New Portal Password
                 </label>
                 <div className="relative">
                   <KeyRound className="w-4 h-4 text-[#8E8E93] absolute left-3.5 top-3" />
@@ -683,7 +920,7 @@ export default function AdminLoginPage({
                 ) : (
                   <>
                     <CheckCircle2 className="w-4 h-4" />
-                    <span>Verify OTP &amp; Save New Password</span>
+                    <span>Verify Code &amp; Save New Password</span>
                   </>
                 )}
               </button>
@@ -699,7 +936,7 @@ export default function AdminLoginPage({
                   className="text-[#8E8E93] hover:text-white font-semibold cursor-pointer flex items-center gap-1"
                 >
                   <ArrowLeft className="w-3.5 h-3.5" />
-                  <span>Back to Sign In</span>
+                  <span>Back to Login</span>
                 </button>
 
                 <button
@@ -709,27 +946,18 @@ export default function AdminLoginPage({
                   className="text-[#1E5AFF] hover:text-white font-semibold cursor-pointer flex items-center gap-1"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Resend Reset OTP</span>
+                  <span>Resend Reset Code</span>
                 </button>
               </div>
             </form>
           )}
 
-          {/* Portal Protocol Info Box */}
-          <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] text-[#8E8E93]">
-            <span className="flex items-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 text-[#1E5AFF]" />
-              Real-Time Schedule &amp; 2FA Protected
-            </span>
-            <span className="text-white/40">256-Bit SSL Encrypted</span>
-          </div>
         </motion.div>
       </main>
 
       {/* Footer */}
-      <footer className="relative z-10 w-full max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between text-xs text-[#8E8E93] gap-2 pt-4">
+      <footer className="relative z-10 w-full max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-center text-xs text-[#8E8E93] gap-2 pt-4">
         <span>&copy; {new Date().getFullYear()} First Avenue Family Dentistry. All rights reserved.</span>
-        <span>Secure Healthcare Record Protocol &bull; PIPEDA Compliant</span>
       </footer>
     </div>
   );

@@ -112,7 +112,7 @@ export default function TransitionSection({
             <p>
               Conveniently located at{" "}
               <strong className="text-[#060C16] font-semibold">
-                308 Wellington street, St. Thomas, ON N5R 2S9
+                308 Wellington Street in St. Thomas
               </strong>
               , our modern clinic is designed from the ground up for patient
               relaxation. We combine compassionate care with cutting-edge dental

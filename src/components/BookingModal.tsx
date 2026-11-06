@@ -34,6 +34,7 @@ import {
   subscribeToAppointments,
   subscribeToDoctors,
   subscribeToDoctorAvailabilities,
+  subscribeToBookingServices,
   subscribeToRealtimeClinicEvents,
   fetchDoctorDateSlotStatuses,
   lockTemporarySlotReservation,
@@ -44,40 +45,17 @@ import {
   DoctorAvailabilityRecord,
   ComputedTimeSlot,
   TemporarySlotReservation,
+  BookingServiceItem,
+  DEFAULT_BOOKING_SERVICES,
+  normalizeServiceKey,
   getConfiguredDoctorSlotsForDate,
 } from "../types/scheduling";
-import { ALL_SERVICES } from "../data/servicesData";
 
 interface BookingModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialService?: string;
 }
-
-const CLINICAL_SERVICES = [
-  {
-    id: "routine-checkup",
-    title: "Routine Checkup & Cleaning",
-    category: "Preventive",
-    duration: "45 mins",
-  },
-  {
-    id: "emergency-care",
-    title: "Emergency Dental Care",
-    category: "Emergency",
-    duration: "Same-Day Priority",
-  },
-  ...ALL_SERVICES.map((s) => ({
-    id: s.id,
-    title: s.title,
-    category: s.category.includes("Cosmetic")
-      ? "Cosmetic"
-      : s.category.includes("Preventive")
-      ? "Preventive"
-      : "Clinical",
-    duration: s.id === "teeth-cleaning" ? "45 mins" : "30–60 mins",
-  })),
-];
 
 const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -120,9 +98,9 @@ function buildGoogleCalendarLink(apt: {
 
   const title = encodeURIComponent(`Dental Visit: ${apt.service} - First Avenue Dentistry`);
   const details = encodeURIComponent(
-    `Dental appointment for ${apt.service} with ${apt.doctor}.\nLocation: 308 Wellington street, St. Thomas, ON N5R 2S9\nPhone: (519) 207-6890`
+    `Dental appointment for ${apt.service} with ${apt.doctor}.\nLocation: 308 Wellington Street, St. Thomas, ON N5R 2S9\nPhone: (519) 207-6890`
   );
-  const location = encodeURIComponent("308 Wellington street, St. Thomas, ON N5R 2S9");
+  const location = encodeURIComponent("308 Wellington Street, St. Thomas, ON N5R 2S9");
 
   return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${startStr}/${endStr}&details=${details}&location=${location}`;
 }
@@ -150,8 +128,8 @@ function downloadIcsInvite(apt: {
     "METHOD:REQUEST",
     "BEGIN:VEVENT",
     `SUMMARY:Dental Visit: ${apt.service} - First Avenue Dentistry`,
-    `DESCRIPTION:Patient: ${apt.patientName}\\nSpecialist: ${apt.doctor}\\nPhone: (519) 207-6890\\nAddress: 308 Wellington street, St. Thomas, ON N5R 2S9`,
-    "LOCATION:308 Wellington street, St. Thomas, ON N5R 2S9",
+    `DESCRIPTION:Patient: ${apt.patientName}\\nSpecialist: ${apt.doctor}\\nPhone: (519) 207-6890\\nAddress: 308 Wellington St, St. Thomas ON`,
+    "LOCATION:308 Wellington Street, St. Thomas, ON N5R 2S9",
     `DTSTART:${cleanDate}T${time24}00`,
     `DTEND:${endStr}`,
     "STATUS:TENTATIVE",
@@ -241,6 +219,9 @@ export default function BookingModal({
 
   // Live Database State
   const [liveDoctors, setLiveDoctors] = useState<Doctor[]>([]);
+  const [bookingServices, setBookingServices] = useState<BookingServiceItem[]>(
+    DEFAULT_BOOKING_SERVICES
+  );
   const [availabilitiesMap, setAvailabilitiesMap] = useState<
     Record<string, DoctorAvailabilityRecord>
   >({});
@@ -270,13 +251,13 @@ export default function BookingModal({
   const [isLockingSlot, setIsLockingSlot] = useState<boolean>(false);
   const [expiredNotice, setExpiredNotice] = useState<string | null>(null);
 
-  // Patient Form Data (Split into firstName & lastName + email & phone)
+  // Patient Form Data (Split into firstName & lastName + email & phone; service selected in Step 2)
   const [formData, setFormData] = useState({
     firstName: "",
     lastName: "",
     phone: "",
     email: "",
-    service: initialService || "Routine Checkup & Cleaning",
+    service: initialService || "",
     preferredTime: "",
     isNewPatient: true,
     notes: "",
@@ -324,7 +305,7 @@ export default function BookingModal({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isOpen, activeReservation, step]);
 
-  // Subscribe to Doctors, Availabilities, Appointments
+  // Subscribe to Doctors, Availabilities, Appointments, and Booking Services
   useEffect(() => {
     const unsubDocs = subscribeToDoctors((docs) => {
       const active = docs.filter((d) => d.status === "active");
@@ -343,12 +324,66 @@ export default function BookingModal({
       setLiveAppointments(apts);
     });
 
+    const unsubServices = subscribeToBookingServices((services) => {
+      if (Array.isArray(services) && services.length > 0) {
+        setBookingServices(services.filter((s) => s.isActive !== false));
+      } else {
+        setBookingServices(DEFAULT_BOOKING_SERVICES);
+      }
+    });
+
     return () => {
       unsubDocs();
       unsubAvail();
       unsubApts();
+      unsubServices();
     };
   }, []);
+
+  // Selected Booking Service Item
+  const selectedServiceItem = useMemo(() => {
+    if (!formData.service) return null;
+    const norm = normalizeServiceKey(formData.service);
+    return (
+      bookingServices.find(
+        (s) =>
+          s.title === formData.service ||
+          s.id === formData.service ||
+          normalizeServiceKey(s.title) === norm ||
+          normalizeServiceKey(s.id) === norm
+      ) || null
+    );
+  }, [bookingServices, formData.service]);
+
+  // Doctors eligible for the currently selected service
+  const eligibleDoctors = useMemo(() => {
+    if (
+      selectedServiceItem &&
+      Array.isArray(selectedServiceItem.allowedDoctorIds) &&
+      selectedServiceItem.allowedDoctorIds.length > 0
+    ) {
+      const allowedSet = new Set(
+        selectedServiceItem.allowedDoctorIds.map((id) => String(id).trim().toLowerCase())
+      );
+      const filtered = liveDoctors.filter(
+        (d) =>
+          allowedSet.has(d.id.toLowerCase()) ||
+          allowedSet.has(d.name.trim().toLowerCase())
+      );
+      if (filtered.length > 0) return filtered;
+    }
+    return liveDoctors;
+  }, [liveDoctors, selectedServiceItem]);
+
+  // Ensure selectedDoctorId stays valid when service changes
+  useEffect(() => {
+    if (selectedDoctorId !== "any") {
+      const stillEligible = eligibleDoctors.some((d) => d.id === selectedDoctorId);
+      if (!stillEligible) {
+        setSelectedDoctorId("any");
+      }
+    }
+  }, [eligibleDoctors, selectedDoctorId]);
 
   const isAnyDoctor = selectedDoctorId === "any";
 
@@ -363,8 +398,12 @@ export default function BookingModal({
         status: "active" as const,
       };
     }
-    return liveDoctors.find((d) => d.id === selectedDoctorId) || liveDoctors[0] || null;
-  }, [isAnyDoctor, liveDoctors, selectedDoctorId]);
+    return (
+      eligibleDoctors.find((d) => d.id === selectedDoctorId) ||
+      eligibleDoctors[0] ||
+      null
+    );
+  }, [isAnyDoctor, eligibleDoctors, selectedDoctorId]);
 
   const selectedDoctorAvailability = useMemo(
     () => (selectedDoctor && !isAnyDoctor ? availabilitiesMap[selectedDoctor.id] || null : null),
@@ -389,10 +428,10 @@ export default function BookingModal({
     });
   }, [dateSlots, slotTimeFilter]);
 
-  // Date summary calculation
+  // Service-specific Date Summary Calculation
   const getDoctorDateSummary = useCallback(
     (doctorId: string, dateStr: string) => {
-      if (dateStr < todayStr) {
+      if (dateStr < todayStr || !formData.service) {
         return { configuredCount: 0, bookedCount: 0, availableCount: 0 };
       }
 
@@ -400,9 +439,13 @@ export default function BookingModal({
         let totalConfigured = 0;
         let totalAvailable = 0;
 
-        for (const doc of liveDoctors) {
+        for (const doc of eligibleDoctors) {
           const availRec = availabilitiesMap[doc.id];
-          const configuredSlots = getConfiguredDoctorSlotsForDate(availRec, dateStr);
+          const configuredSlots = getConfiguredDoctorSlotsForDate(
+            availRec,
+            dateStr,
+            formData.service
+          );
           if (configuredSlots.length === 0) continue;
 
           totalConfigured += configuredSlots.length;
@@ -433,10 +476,17 @@ export default function BookingModal({
         };
       }
 
-      const docObj = liveDoctors.find((d) => d.id === doctorId);
-      const docName = docObj?.name || "";
+      const docObj = eligibleDoctors.find((d) => d.id === doctorId);
+      if (!docObj) {
+        return { configuredCount: 0, bookedCount: 0, availableCount: 0 };
+      }
+      const docName = docObj.name || "";
       const availRec = availabilitiesMap[doctorId];
-      const configuredSlots = getConfiguredDoctorSlotsForDate(availRec, dateStr);
+      const configuredSlots = getConfiguredDoctorSlotsForDate(
+        availRec,
+        dateStr,
+        formData.service
+      );
       if (configuredSlots.length === 0) {
         return { configuredCount: 0, bookedCount: 0, availableCount: 0 };
       }
@@ -464,11 +514,12 @@ export default function BookingModal({
         availableCount,
       };
     },
-    [availabilitiesMap, liveAppointments, liveDoctors, todayStr]
+    [availabilitiesMap, liveAppointments, eligibleDoctors, todayStr, formData.service]
   );
 
-  // Next available date
+  // Next available date for the chosen service & doctor
   const nextAvailableDateStr = useMemo(() => {
+    if (!formData.service) return todayStr;
     const base = new Date();
     for (let i = 0; i < 60; i++) {
       const d = new Date(base.getTime() + i * 86400000);
@@ -481,10 +532,11 @@ export default function BookingModal({
       }
     }
     return todayStr;
-  }, [selectedDoctorId, getDoctorDateSummary, todayStr]);
+  }, [selectedDoctorId, getDoctorDateSummary, todayStr, formData.service]);
 
-  // Auto-select earliest available date
+  // Auto-select earliest available date whenever service or doctor changes
   useEffect(() => {
+    if (!formData.service) return;
     if (selectedDate && selectedDate >= todayStr) {
       const check = getDoctorDateSummary(selectedDoctorId, selectedDate);
       if (check.availableCount > 0) return;
@@ -495,31 +547,45 @@ export default function BookingModal({
       const [y, m] = nextAvailableDateStr.split("-").map(Number);
       setCalendarMonth(new Date(y, m - 1, 1));
     }
-  }, [selectedDoctorId, nextAvailableDateStr, getDoctorDateSummary, selectedDate, todayStr]);
+  }, [
+    selectedDoctorId,
+    formData.service,
+    nextAvailableDateStr,
+    getDoctorDateSummary,
+    selectedDate,
+    todayStr,
+  ]);
 
-  // Fetch live slot statuses
+  // Fetch live slot statuses for the chosen service, doctor, and date
   const refreshDateSlots = useCallback(async () => {
-    if (!selectedDate) {
+    if (!selectedDate || !formData.service) {
       setDateSlots([]);
       return;
     }
     setLoadingSlots(true);
     try {
       const targetId = isAnyDoctor ? "any" : selectedDoctor?.id || "any";
-      const res = await fetchDoctorDateSlotStatuses(targetId, selectedDate, sessionId);
+      const res = await fetchDoctorDateSlotStatuses(
+        targetId,
+        selectedDate,
+        sessionId,
+        formData.service
+      );
       setDateSlots(res.slots || []);
     } catch {
       setDateSlots([]);
     } finally {
       setLoadingSlots(false);
     }
-  }, [selectedDoctor?.id, isAnyDoctor, selectedDate, sessionId]);
+  }, [selectedDoctor?.id, isAnyDoctor, selectedDate, sessionId, formData.service]);
 
   useEffect(() => {
-    if (isOpen && selectedDate) {
+    if (isOpen && selectedDate && formData.service) {
       refreshDateSlots();
+    } else if (!formData.service) {
+      setDateSlots([]);
     }
-  }, [isOpen, selectedDoctorId, selectedDate, refreshDateSlots]);
+  }, [isOpen, selectedDoctorId, selectedDate, formData.service, refreshDateSlots]);
 
   // Real-time SSE listener
   useEffect(() => {
@@ -527,6 +593,7 @@ export default function BookingModal({
     const unsubSSE = subscribeToRealtimeClinicEvents((ev) => {
       if (
         ev.type === "availability_updated" ||
+        ev.type === "booking_services_updated" ||
         ev.type === "reservation_locked" ||
         ev.type === "reservation_released" ||
         ev.type === "reservations_expired" ||
@@ -573,15 +640,27 @@ export default function BookingModal({
     return () => clearInterval(interval);
   }, [activeReservation, sessionId, refreshDateSlots]);
 
-  // Prefill service if provided
+  // Prefill service if provided, else leave empty so user picks from 'Select A Reason' in Step 2
   useEffect(() => {
     if (initialService) {
+      const norm = normalizeServiceKey(initialService);
+      const matched = bookingServices.find(
+        (s) =>
+          s.title === initialService ||
+          s.id === initialService ||
+          normalizeServiceKey(s.title) === norm
+      );
       setFormData((prev) => ({
         ...prev,
-        service: initialService,
+        service: matched ? matched.title : initialService,
+      }));
+    } else if (isOpen) {
+      setFormData((prev) => ({
+        ...prev,
+        service: prev.service || "",
       }));
     }
-  }, [initialService]);
+  }, [initialService, bookingServices, isOpen]);
 
   // Reset when modal opens
   useEffect(() => {
@@ -593,8 +672,11 @@ export default function BookingModal({
       setOtpError(null);
       setCopiedRef(false);
       setIsDoctorDropdownOpen(false);
+      if (!initialService) {
+        setFormData((prev) => ({ ...prev, service: "", preferredTime: "" }));
+      }
     }
-  }, [isOpen]);
+  }, [isOpen, initialService]);
 
   const handleCloseModal = async () => {
     if (activeReservation && step !== 5) {
@@ -604,6 +686,24 @@ export default function BookingModal({
       setActiveReservation(null);
     }
     onClose();
+  };
+
+  // Handle changing the Service / Reason in Step 2
+  const handleSelectServiceReason = async (newServiceTitle: string) => {
+    if (newServiceTitle === formData.service) return;
+    if (activeReservation) {
+      try {
+        await releaseTemporarySlotReservation(activeReservation.id, sessionId);
+      } catch {}
+      setActiveReservation(null);
+    }
+    setFormData((prev) => ({
+      ...prev,
+      service: newServiceTitle,
+      preferredTime: "",
+    }));
+    setSubmitError(null);
+    setExpiredNotice(null);
   };
 
   const handleSelectDoctorId = async (docId: string) => {
@@ -639,7 +739,7 @@ export default function BookingModal({
 
   // Lock 5-Minute Temporary Slot Reservation
   const handleSelectTimeSlot = async (slot: ComputedTimeSlot) => {
-    if (!selectedDate) return;
+    if (!selectedDate || !formData.service) return;
     if (slot.status === "booked" || slot.status === "reserved_other") return;
 
     setIsLockingSlot(true);
@@ -655,6 +755,7 @@ export default function BookingModal({
         date: selectedDate,
         time: slot.time,
         sessionId,
+        service: formData.service,
         patientName: fullName || undefined,
         patientEmail: formData.email || undefined,
       });
@@ -892,7 +993,10 @@ export default function BookingModal({
     const cleanFullName = `${cleanFirst} ${cleanLast}`.trim();
     const cleanPhone = formData.phone.trim();
     const cleanEmail = formData.email.trim().toLowerCase();
-    const cleanService = formData.service || "Routine Checkup & Cleaning";
+    const cleanService =
+      formData.service ||
+      bookingServices[0]?.title ||
+      "New Patient Exam- All ages";
 
     setIsSubmitting(true);
 
@@ -926,7 +1030,10 @@ export default function BookingModal({
         assignedDoctor: assignedDocName,
         preferredDate: selectedDate,
         preferredTime: formData.preferredTime,
-        durationMinutes: selectedDoctorAvailability?.defaultDuration || 30,
+        durationMinutes:
+          selectedServiceItem?.durationMinutes ||
+          selectedDoctorAvailability?.defaultDuration ||
+          30,
         reservationId: activeReservation.id,
         sessionId,
         notes: formData.notes.trim() || cleanService,
@@ -972,7 +1079,7 @@ export default function BookingModal({
 
   const stepsMeta = [
     { num: 1 as BookingStep, label: "Patient" },
-    { num: 2 as BookingStep, label: "Doctor & Time" },
+    { num: 2 as BookingStep, label: "Service & Time" },
     { num: 3 as BookingStep, label: "Details" },
     { num: 4 as BookingStep, label: "Summary" },
   ];
@@ -1148,9 +1255,6 @@ export default function BookingModal({
                 className="space-y-6"
               >
                 <div className="space-y-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-[#1E5AFF]">
-                    Step 1 of 4
-                  </span>
                   <h3 className="text-lg sm:text-xl font-bold text-[#060C16]">
                     Have you visited First Avenue Dentistry before?
                   </h3>
@@ -1271,7 +1375,7 @@ export default function BookingModal({
                                   Welcome back, {formData.firstName} {formData.lastName}
                                 </div>
                                 <div className="text-[11px] text-[#64748B]">
-                                  Verified ({formData.email}) · Details auto-filled for Step 3
+                                  Verified ({formData.email})
                                 </div>
                               </div>
                             </div>
@@ -1392,7 +1496,7 @@ export default function BookingModal({
                     <span>
                       {!formData.isNewPatient && !autoFilled
                         ? "Verify Email Above to Continue"
-                        : "Continue to Doctor & Time"}
+                        : "Continue to Service & Time"}
                     </span>
                     <ChevronRight className="w-4 h-4" />
                   </motion.button>
@@ -1400,7 +1504,7 @@ export default function BookingModal({
               </motion.div>
             )}
 
-            {/* ================= STEP 2: CHOOSE DOCTOR, DATE & TIME ================= */}
+            {/* ================= STEP 2: SELECT A REASON (SERVICE), DOCTOR, DATE & TIME ================= */}
             {step === 2 && (
               <motion.div
                 key="step-2"
@@ -1412,367 +1516,428 @@ export default function BookingModal({
                 className="space-y-5"
               >
                 <div className="space-y-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-[#1E5AFF]">
-                    Step 2 of 4
-                  </span>
                   <h3 className="text-lg sm:text-xl font-bold text-[#060C16]">
-                    Choose Doctor, Date &amp; Time
+                    Select A Reason, Doctor &amp; Time
                   </h3>
                   <p className="text-xs text-[#64748B]">
-                    Selecting a time reserves it exclusively for you for 5 minutes while you complete your booking.
+                    Choose the reason for your visit below to view doctor availability and open times.
                   </p>
                 </div>
 
-                {/* 1. Doctor Selector Box */}
-                <div className="space-y-1.5" ref={doctorDropdownRef}>
-                  <label className="block text-xs font-bold text-[#060C16]">
-                    Select Doctor
-                  </label>
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setIsDoctorDropdownOpen((prev) => !prev)}
-                      className={`w-full px-4 py-3 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between gap-3 ${
-                        isDoctorDropdownOpen
-                          ? "border-[#1E5AFF] bg-[#F8FAFF] ring-1 ring-[#1E5AFF]"
-                          : "border-[#CBD5E1] bg-white hover:border-[#94A3B8]"
-                      }`}
+                {/* 1. Select A Reason (Service Selection) */}
+                <div className="p-4 rounded-2xl border border-[#DCE6FF] bg-[#F8FAFF] space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label
+                      htmlFor={serviceSelectId}
+                      className="block text-xs font-bold text-[#002156]"
                     >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-9 h-9 rounded-xl bg-[#F1F5F9] text-[#1E5AFF] flex items-center justify-center shrink-0 font-bold text-xs">
-                          {isAnyDoctor ? (
-                            <Users className="w-4 h-4" />
-                          ) : (
-                            <Stethoscope className="w-4 h-4" />
-                          )}
-                        </div>
-                        <div className="min-w-0">
-                          <div className="text-xs sm:text-sm font-bold text-[#060C16] truncate">
-                            {selectedDoctor?.name || "Select Doctor"}
-                          </div>
-                          <div className="text-[11px] text-[#64748B] truncate">
-                            {isAnyDoctor
-                              ? "Shows all open slots across our clinical team"
-                              : selectedDoctor?.title || "Clinical Dentist"}
-                          </div>
-                        </div>
-                      </div>
-                      <ChevronDown
-                        className={`w-4 h-4 text-[#64748B] shrink-0 transition-transform duration-200 ${
-                          isDoctorDropdownOpen ? "rotate-180 text-[#1E5AFF]" : ""
-                        }`}
-                      />
-                    </button>
+                      1. Select A Reason for Your Visit *
+                    </label>
+                    {selectedServiceItem && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-lg bg-white border border-[#C7D8FF] text-[#1E5AFF] text-[11px] font-bold">
+                        <Clock className="w-3 h-3" />
+                        <span>{`${selectedServiceItem.durationMinutes || 45} mins`}</span>
+                      </span>
+                    )}
+                  </div>
+                  <div className="relative">
+                    <select
+                      id={serviceSelectId}
+                      value={formData.service}
+                      onChange={(e) => handleSelectServiceReason(e.target.value)}
+                      className="w-full px-4 py-3 min-h-[48px] rounded-xl border border-[#1E5AFF]/40 bg-white text-xs sm:text-sm font-bold text-[#060C16] focus:outline-none focus:border-[#1E5AFF] focus:ring-2 focus:ring-[#1E5AFF]/15 cursor-pointer shadow-2xs"
+                    >
+                      <option value="">Select A Reason</option>
+                      {bookingServices.map((svc) => (
+                        <option key={svc.id} value={svc.title}>
+                          {svc.title}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
 
-                    <AnimatePresence>
-                      {isDoctorDropdownOpen && (
-                        <motion.div
-                          initial={{ opacity: 0, y: -4 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          exit={{ opacity: 0, y: -4 }}
-                          transition={{ duration: 0.15 }}
-                          className="absolute left-0 right-0 mt-1.5 bg-white rounded-2xl border border-[#CBD5E1] shadow-xl z-30 max-h-60 overflow-y-auto divide-y divide-[#F1F5F9]"
+                {/* 2. Reveal Doctor Selector & Service-Specific Availability Calendar once Service is chosen */}
+                {!formData.service ? (
+                  <motion.div
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="p-8 rounded-2xl border border-dashed border-[#CBD5E1] bg-[#F8FAFC] text-center space-y-2.5"
+                  >
+                    <div className="w-11 h-11 rounded-2xl bg-[#EAF1FF] text-[#1E5AFF] flex items-center justify-center mx-auto">
+                      <CalendarIcon className="w-5 h-5" />
+                    </div>
+                    <h4 className="text-sm font-bold text-[#060C16]">
+                      Select A Reason Above to View Openings
+                    </h4>
+                    <p className="text-xs text-[#64748B] max-w-md mx-auto leading-relaxed">
+                      Each dental service has its own dedicated doctor schedule and appointment duration. Choose a reason from the dropdown above to load live openings.
+                    </p>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key={`schedule-for-${formData.service}`}
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.22 }}
+                    className="space-y-4"
+                  >
+                    {/* Doctor Selector Box */}
+                    <div className="space-y-1.5" ref={doctorDropdownRef}>
+                      <div className="flex items-center justify-between gap-2">
+                        <label className="block text-xs font-bold text-[#060C16]">
+                          2. Select Doctor
+                        </label>
+                      </div>
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={() => setIsDoctorDropdownOpen((prev) => !prev)}
+                          className={`w-full px-4 py-3 rounded-2xl border text-left transition-all cursor-pointer flex items-center justify-between gap-3 ${
+                            isDoctorDropdownOpen
+                              ? "border-[#1E5AFF] bg-[#F8FAFF] ring-1 ring-[#1E5AFF]"
+                              : "border-[#CBD5E1] bg-white hover:border-[#94A3B8]"
+                          }`}
                         >
-                          <button
-                            type="button"
-                            onClick={() => handleSelectDoctorId("any")}
-                            className={`w-full px-4 py-3 text-left flex items-center justify-between gap-3 hover:bg-[#F8FAFC] transition-colors cursor-pointer ${
-                              isAnyDoctor ? "bg-[#F0F5FF]/70" : ""
-                            }`}
-                          >
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div
-                                className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                                  isAnyDoctor
-                                    ? "bg-[#1E5AFF] text-white"
-                                    : "bg-[#F1F5F9] text-[#1E5AFF]"
-                                }`}
-                              >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-9 h-9 rounded-xl bg-[#F1F5F9] text-[#1E5AFF] flex items-center justify-center shrink-0 font-bold text-xs">
+                              {isAnyDoctor ? (
                                 <Users className="w-4 h-4" />
+                              ) : (
+                                <Stethoscope className="w-4 h-4" />
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <div className="text-xs sm:text-sm font-bold text-[#060C16] truncate">
+                                {selectedDoctor?.name || "Select Doctor"}
                               </div>
-                              <div className="min-w-0">
-                                <div className="text-xs font-bold text-[#060C16]">
-                                  Any Available Doctor
-                                </div>
-                                <div className="text-[11px] text-[#64748B]">
-                                  Earliest available appointment time
-                                </div>
+                              <div className="text-[11px] text-[#64748B] truncate">
+                                {isAnyDoctor
+                                  ? `Shows all open slots for ${formData.service}`
+                                  : selectedDoctor?.title || "Clinical Dentist"}
                               </div>
                             </div>
-                            {isAnyDoctor && <Check className="w-4 h-4 text-[#1E5AFF] shrink-0" />}
-                          </button>
+                          </div>
+                          <ChevronDown
+                            className={`w-4 h-4 text-[#64748B] shrink-0 transition-transform duration-200 ${
+                              isDoctorDropdownOpen ? "rotate-180 text-[#1E5AFF]" : ""
+                            }`}
+                          />
+                        </button>
 
-                          {liveDoctors.map((doc) => {
-                            const isSelected = !isAnyDoctor && selectedDoctor?.id === doc.id;
-                            return (
+                        <AnimatePresence>
+                          {isDoctorDropdownOpen && (
+                            <motion.div
+                              initial={{ opacity: 0, y: -4 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, y: -4 }}
+                              transition={{ duration: 0.15 }}
+                              className="absolute left-0 right-0 mt-1.5 bg-white rounded-2xl border border-[#CBD5E1] shadow-xl z-30 max-h-60 overflow-y-auto divide-y divide-[#F1F5F9]"
+                            >
                               <button
-                                key={doc.id}
                                 type="button"
-                                onClick={() => handleSelectDoctorId(doc.id)}
+                                onClick={() => handleSelectDoctorId("any")}
                                 className={`w-full px-4 py-3 text-left flex items-center justify-between gap-3 hover:bg-[#F8FAFC] transition-colors cursor-pointer ${
-                                  isSelected ? "bg-[#F0F5FF]/70" : ""
+                                  isAnyDoctor ? "bg-[#F0F5FF]/70" : ""
                                 }`}
                               >
                                 <div className="flex items-center gap-3 min-w-0">
                                   <div
-                                    className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 ${
-                                      isSelected
+                                    className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                      isAnyDoctor
                                         ? "bg-[#1E5AFF] text-white"
-                                        : "bg-[#F1F5F9] text-[#060C16]"
+                                        : "bg-[#F1F5F9] text-[#1E5AFF]"
                                     }`}
                                   >
-                                    {doc.name
-                                      .replace(/^Dr\.\s*/i, "")
-                                      .slice(0, 2)
-                                      .toUpperCase()}
+                                    <Users className="w-4 h-4" />
                                   </div>
                                   <div className="min-w-0">
-                                    <div className="text-xs font-bold text-[#060C16] truncate">
-                                      {doc.name}
+                                    <div className="text-xs font-bold text-[#060C16]">
+                                      Any Available Doctor
                                     </div>
-                                    <div className="text-[11px] text-[#64748B] truncate">
-                                      {doc.title || "Clinical Dentist"}
+                                    <div className="text-[11px] text-[#64748B]">
+                                      Earliest available opening for this service
                                     </div>
                                   </div>
                                 </div>
-                                {isSelected && (
+                                {isAnyDoctor && (
                                   <Check className="w-4 h-4 text-[#1E5AFF] shrink-0" />
+                                )}
+                              </button>
+
+                              {eligibleDoctors.map((doc) => {
+                                const isSelected = !isAnyDoctor && selectedDoctor?.id === doc.id;
+                                return (
+                                  <button
+                                    key={doc.id}
+                                    type="button"
+                                    onClick={() => handleSelectDoctorId(doc.id)}
+                                    className={`w-full px-4 py-3 text-left flex items-center justify-between gap-3 hover:bg-[#F8FAFC] transition-colors cursor-pointer ${
+                                      isSelected ? "bg-[#F0F5FF]/70" : ""
+                                    }`}
+                                  >
+                                    <div className="flex items-center gap-3 min-w-0">
+                                      <div
+                                        className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 ${
+                                          isSelected
+                                            ? "bg-[#1E5AFF] text-white"
+                                            : "bg-[#F1F5F9] text-[#060C16]"
+                                        }`}
+                                      >
+                                        {doc.name
+                                          .replace(/^Dr\.\s*/i, "")
+                                          .slice(0, 2)
+                                          .toUpperCase()}
+                                      </div>
+                                      <div className="min-w-0">
+                                        <div className="text-xs font-bold text-[#060C16] truncate">
+                                          {doc.name}
+                                        </div>
+                                        <div className="text-[11px] text-[#64748B] truncate">
+                                          {doc.title || "Clinical Dentist"}
+                                        </div>
+                                      </div>
+                                    </div>
+                                    {isSelected && (
+                                      <Check className="w-4 h-4 text-[#1E5AFF] shrink-0" />
+                                    )}
+                                  </button>
+                                );
+                              })}
+                            </motion.div>
+                          )}
+                        </AnimatePresence>
+                      </div>
+                    </div>
+
+                    {/* 3. Date & Time Grid */}
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                      {/* Calendar Column (7 cols) */}
+                      <div className="md:col-span-7 p-4 rounded-2xl border border-[#E2E8F0] bg-[#F8FAFC] space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-[#060C16]">
+                            {calendarMonth.toLocaleDateString("en-US", {
+                              month: "long",
+                              year: "numeric",
+                            })}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setCalendarMonth(
+                                  new Date(
+                                    calendarMonth.getFullYear(),
+                                    calendarMonth.getMonth() - 1,
+                                    1
+                                  )
+                                )
+                              }
+                              className="p-1.5 rounded-lg bg-white border border-[#E2E8F0] hover:bg-[#F1F5F9] text-[#060C16] cursor-pointer"
+                              aria-label="Previous month"
+                            >
+                              <ChevronLeft className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setCalendarMonth(
+                                  new Date(
+                                    calendarMonth.getFullYear(),
+                                    calendarMonth.getMonth() + 1,
+                                    1
+                                  )
+                                )
+                              }
+                              className="p-1.5 rounded-lg bg-white border border-[#E2E8F0] hover:bg-[#F1F5F9] text-[#060C16] cursor-pointer"
+                              aria-label="Next month"
+                            >
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Quick Date Shortcuts */}
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleSelectDate(todayStr)}
+                            className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold cursor-pointer transition-colors ${
+                              selectedDate === todayStr
+                                ? "bg-[#1E5AFF] text-white"
+                                : "bg-white border border-[#E2E8F0] text-[#475569] hover:text-[#060C16]"
+                            }`}
+                          >
+                            Today
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleSelectDate(tomorrowStr)}
+                            className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold cursor-pointer transition-colors ${
+                              selectedDate === tomorrowStr
+                                ? "bg-[#1E5AFF] text-white"
+                                : "bg-white border border-[#E2E8F0] text-[#475569] hover:text-[#060C16]"
+                            }`}
+                          >
+                            Tomorrow
+                          </button>
+                          {nextAvailableDateStr &&
+                            nextAvailableDateStr !== todayStr &&
+                            nextAvailableDateStr !== tomorrowStr && (
+                              <button
+                                type="button"
+                                onClick={() => handleSelectDate(nextAvailableDateStr)}
+                                className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold cursor-pointer transition-colors ${
+                                  selectedDate === nextAvailableDateStr
+                                    ? "bg-[#1E5AFF] text-white"
+                                    : "bg-white border border-[#E2E8F0] text-[#1E5AFF]"
+                                }`}
+                              >
+                                Next Open ({nextAvailableDateStr.slice(5)})
+                              </button>
+                            )}
+                        </div>
+
+                        {/* Weekday Headers */}
+                        <div className="grid grid-cols-7 gap-1 text-center">
+                          {WEEKDAY_SHORT.map((w) => (
+                            <div
+                              key={w}
+                              className="text-[10px] font-semibold text-[#64748B] py-0.5"
+                            >
+                              {w}
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Days Grid */}
+                        <div className="grid grid-cols-7 gap-1">
+                          {calendarCells.map((cell, idx) => {
+                            if (!cell.dateStr) {
+                              return <div key={`empty-${idx}`} className="h-9" />;
+                            }
+                            const isSelected = cell.dateStr === selectedDate;
+                            const hasOpen = !cell.isPast && cell.availableCount > 0;
+                            const isDisabled = cell.isPast || cell.configuredCount === 0;
+
+                            return (
+                              <button
+                                key={cell.dateStr}
+                                type="button"
+                                disabled={isDisabled}
+                                onClick={() => handleSelectDate(cell.dateStr)}
+                                className={`h-9 rounded-xl flex flex-col items-center justify-center text-xs font-bold transition-all relative ${
+                                  isSelected
+                                    ? "bg-[#1E5AFF] text-white shadow-xs cursor-pointer"
+                                    : hasOpen
+                                    ? "bg-white text-[#060C16] border border-[#E2E8F0] hover:border-[#1E5AFF] cursor-pointer"
+                                    : "text-[#CBD5E1] cursor-not-allowed"
+                                }`}
+                              >
+                                <span>{cell.dayNum}</span>
+                                {hasOpen && !isSelected && (
+                                  <span className="w-1 h-1 rounded-full bg-emerald-500 mt-0.5" />
                                 )}
                               </button>
                             );
                           })}
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </div>
-                </div>
-
-                {/* 2. Date & Time Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                  {/* Calendar Column (7 cols) */}
-                  <div className="md:col-span-7 p-4 rounded-2xl border border-[#E2E8F0] bg-[#F8FAFC] space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-[#060C16]">
-                        {calendarMonth.toLocaleDateString("en-US", {
-                          month: "long",
-                          year: "numeric",
-                        })}
-                      </span>
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setCalendarMonth(
-                              new Date(
-                                calendarMonth.getFullYear(),
-                                calendarMonth.getMonth() - 1,
-                                1
-                              )
-                            )
-                          }
-                          className="p-1.5 rounded-lg bg-white border border-[#E2E8F0] hover:bg-[#F1F5F9] text-[#060C16] cursor-pointer"
-                          aria-label="Previous month"
-                        >
-                          <ChevronLeft className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setCalendarMonth(
-                              new Date(
-                                calendarMonth.getFullYear(),
-                                calendarMonth.getMonth() + 1,
-                                1
-                              )
-                            )
-                          }
-                          className="p-1.5 rounded-lg bg-white border border-[#E2E8F0] hover:bg-[#F1F5F9] text-[#060C16] cursor-pointer"
-                          aria-label="Next month"
-                        >
-                          <ChevronRight className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Quick Date Shortcuts */}
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => handleSelectDate(todayStr)}
-                        className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold cursor-pointer transition-colors ${
-                          selectedDate === todayStr
-                            ? "bg-[#1E5AFF] text-white"
-                            : "bg-white border border-[#E2E8F0] text-[#475569] hover:text-[#060C16]"
-                        }`}
-                      >
-                        Today
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleSelectDate(tomorrowStr)}
-                        className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold cursor-pointer transition-colors ${
-                          selectedDate === tomorrowStr
-                            ? "bg-[#1E5AFF] text-white"
-                            : "bg-white border border-[#E2E8F0] text-[#475569] hover:text-[#060C16]"
-                        }`}
-                      >
-                        Tomorrow
-                      </button>
-                      {nextAvailableDateStr &&
-                        nextAvailableDateStr !== todayStr &&
-                        nextAvailableDateStr !== tomorrowStr && (
-                          <button
-                            type="button"
-                            onClick={() => handleSelectDate(nextAvailableDateStr)}
-                            className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold cursor-pointer transition-colors ${
-                              selectedDate === nextAvailableDateStr
-                                ? "bg-[#1E5AFF] text-white"
-                                : "bg-white border border-[#E2E8F0] text-[#1E5AFF]"
-                            }`}
-                          >
-                            Next Open ({nextAvailableDateStr.slice(5)})
-                          </button>
-                        )}
-                    </div>
-
-                    {/* Weekday Headers */}
-                    <div className="grid grid-cols-7 gap-1 text-center">
-                      {WEEKDAY_SHORT.map((w) => (
-                        <div
-                          key={w}
-                          className="text-[10px] font-semibold text-[#64748B] py-0.5"
-                        >
-                          {w}
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* Days Grid */}
-                    <div className="grid grid-cols-7 gap-1">
-                      {calendarCells.map((cell, idx) => {
-                        if (!cell.dateStr) {
-                          return <div key={`empty-${idx}`} className="h-9" />;
-                        }
-                        const isSelected = cell.dateStr === selectedDate;
-                        const hasOpen = !cell.isPast && cell.availableCount > 0;
-                        const isDisabled = cell.isPast || cell.configuredCount === 0;
-
-                        return (
-                          <button
-                            key={cell.dateStr}
-                            type="button"
-                            disabled={isDisabled}
-                            onClick={() => handleSelectDate(cell.dateStr)}
-                            className={`h-9 rounded-xl flex flex-col items-center justify-center text-xs font-bold transition-all relative ${
-                              isSelected
-                                ? "bg-[#1E5AFF] text-white shadow-xs cursor-pointer"
-                                : hasOpen
-                                ? "bg-white text-[#060C16] border border-[#E2E8F0] hover:border-[#1E5AFF] cursor-pointer"
-                                : "text-[#CBD5E1] cursor-not-allowed"
-                            }`}
-                          >
-                            <span>{cell.dayNum}</span>
-                            {hasOpen && !isSelected && (
-                              <span className="w-1 h-1 rounded-full bg-emerald-500 mt-0.5" />
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-
-                  {/* Time Slots Column (5 cols) */}
-                  <div className="md:col-span-5 p-4 rounded-2xl border border-[#E2E8F0] bg-[#F8FAFC] flex flex-col justify-between space-y-3">
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-[#060C16]">
-                          Available Times
-                        </span>
-                        <div className="flex items-center gap-1 bg-white p-0.5 rounded-lg border border-[#E2E8F0]">
-                          {(["all", "morning", "afternoon"] as const).map((f) => (
-                            <button
-                              key={f}
-                              type="button"
-                              onClick={() => setSlotTimeFilter(f)}
-                              className={`px-2 py-0.5 rounded-md text-[10px] font-semibold capitalize cursor-pointer transition-colors ${
-                                slotTimeFilter === f
-                                  ? "bg-[#060C16] text-white"
-                                  : "text-[#64748B] hover:text-[#060C16]"
-                              }`}
-                            >
-                              {f}
-                            </button>
-                          ))}
                         </div>
                       </div>
 
-                      {loadingSlots ? (
-                        <div className="py-12 text-center text-xs text-[#64748B] flex flex-col items-center gap-2">
-                          <RefreshCw className="w-4 h-4 animate-spin text-[#1E5AFF]" />
-                          <span>Loading schedule...</span>
-                        </div>
-                      ) : filteredDateSlots.length === 0 ? (
-                        <div className="py-10 text-center space-y-2">
-                          <p className="text-xs text-[#64748B]">
-                            No open slots for this filter/date.
-                          </p>
-                          {nextAvailableDateStr && nextAvailableDateStr !== selectedDate && (
-                            <button
-                              type="button"
-                              onClick={() => handleSelectDate(nextAvailableDateStr)}
-                              className="px-3 py-1.5 rounded-lg bg-[#1E5AFF] text-white text-[11px] font-semibold cursor-pointer"
-                            >
-                              Jump to Next Available
-                            </button>
+                      {/* Time Slots Column (5 cols) */}
+                      <div className="md:col-span-5 p-4 rounded-2xl border border-[#E2E8F0] bg-[#F8FAFC] flex flex-col justify-between space-y-3">
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-[#060C16]">
+                              Available Times
+                            </span>
+                            <div className="flex items-center gap-1 bg-white p-0.5 rounded-lg border border-[#E2E8F0]">
+                              {(["all", "morning", "afternoon"] as const).map((f) => (
+                                <button
+                                  key={f}
+                                  type="button"
+                                  onClick={() => setSlotTimeFilter(f)}
+                                  className={`px-2 py-0.5 rounded-md text-[10px] font-semibold capitalize cursor-pointer transition-colors ${
+                                    slotTimeFilter === f
+                                      ? "bg-[#060C16] text-white"
+                                      : "text-[#64748B] hover:text-[#060C16]"
+                                  }`}
+                                >
+                                  {f}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {loadingSlots ? (
+                            <div className="py-12 text-center text-xs text-[#64748B] flex flex-col items-center gap-2">
+                              <RefreshCw className="w-4 h-4 animate-spin text-[#1E5AFF]" />
+                              <span>Loading schedule...</span>
+                            </div>
+                          ) : filteredDateSlots.length === 0 ? (
+                            <div className="py-10 text-center space-y-2">
+                              <p className="text-xs text-[#64748B]">
+                                No open slots for this service on this date.
+                              </p>
+                              {nextAvailableDateStr && nextAvailableDateStr !== selectedDate && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSelectDate(nextAvailableDateStr)}
+                                  className="px-3 py-1.5 rounded-lg bg-[#1E5AFF] text-white text-[11px] font-semibold cursor-pointer"
+                                >
+                                  Jump to Next Available
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-0.5">
+                              {filteredDateSlots.map((slot) => {
+                                const isSelected =
+                                  formData.preferredTime === slot.time &&
+                                  Boolean(activeReservation);
+                                const isUnavailable =
+                                  slot.status === "booked" ||
+                                  slot.status === "reserved_other";
+
+                                return (
+                                  <motion.button
+                                    key={slot.time}
+                                    type="button"
+                                    whileTap={!isUnavailable ? { scale: 0.97 } : undefined}
+                                    disabled={isUnavailable || isLockingSlot}
+                                    onClick={() => handleSelectTimeSlot(slot)}
+                                    className={`py-2.5 px-2 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 ${
+                                      isSelected
+                                        ? "bg-[#1E5AFF] text-white border-[#1E5AFF] shadow-xs cursor-pointer"
+                                        : isUnavailable
+                                        ? "bg-[#F1F5F9] text-[#94A3B8] border-[#E2E8F0] line-through cursor-not-allowed"
+                                        : "bg-white text-[#060C16] border-[#E2E8F0] hover:border-[#1E5AFF] cursor-pointer"
+                                    }`}
+                                  >
+                                    {isSelected && <Lock className="w-3 h-3 shrink-0" />}
+                                    <span>{slot.time}</span>
+                                  </motion.button>
+                                );
+                              })}
+                            </div>
                           )}
                         </div>
-                      ) : (
-                        <div className="grid grid-cols-2 gap-2 max-h-56 overflow-y-auto pr-0.5">
-                          {filteredDateSlots.map((slot) => {
-                            const isSelected =
-                              formData.preferredTime === slot.time &&
-                              Boolean(activeReservation);
-                            const isUnavailable =
-                              slot.status === "booked" ||
-                              slot.status === "reserved_other";
 
-                            return (
-                              <motion.button
-                                key={slot.time}
-                                type="button"
-                                whileTap={!isUnavailable ? { scale: 0.97 } : undefined}
-                                disabled={isUnavailable || isLockingSlot}
-                                onClick={() => handleSelectTimeSlot(slot)}
-                                className={`py-2.5 px-2 rounded-xl text-xs font-bold border transition-all flex items-center justify-center gap-1.5 ${
-                                  isSelected
-                                    ? "bg-[#1E5AFF] text-white border-[#1E5AFF] shadow-xs cursor-pointer"
-                                    : isUnavailable
-                                    ? "bg-[#F1F5F9] text-[#94A3B8] border-[#E2E8F0] line-through cursor-not-allowed"
-                                    : "bg-white text-[#060C16] border-[#E2E8F0] hover:border-[#1E5AFF] cursor-pointer"
-                                }`}
-                              >
-                                {isSelected && <Lock className="w-3 h-3 shrink-0" />}
-                                <span>{slot.time}</span>
-                              </motion.button>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Selected Slot Status Footer */}
-                    {activeReservation && formData.preferredTime && (
-                      <div className="p-2.5 rounded-xl bg-[#F0F5FF] border border-[#BFDBFE] text-[11px] text-[#1E3A8A] flex items-center justify-between">
-                        <span className="font-semibold truncate">
-                          Reserved: {formData.preferredTime}
-                        </span>
-                        <span className="font-mono font-bold text-[#1E5AFF] shrink-0">
-                          {formatTimer(reservationRemainingSeconds)}
-                        </span>
+                        {/* Selected Slot Status Footer */}
+                        {activeReservation && formData.preferredTime && (
+                          <div className="p-2.5 rounded-xl bg-[#F0F5FF] border border-[#BFDBFE] text-[11px] text-[#1E3A8A] flex items-center justify-between">
+                            <span className="font-semibold truncate">
+                              Reserved: {formData.preferredTime}
+                            </span>
+                            <span className="font-mono font-bold text-[#1E5AFF] shrink-0">
+                              {formatTimer(reservationRemainingSeconds)}
+                            </span>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                </div>
+                    </div>
+                  </motion.div>
+                )}
 
                 {/* Step 2 Navigation Buttons */}
                 <div className="pt-4 border-t border-[#E2E8F0] flex items-center justify-between gap-3">
@@ -1789,7 +1954,12 @@ export default function BookingModal({
                     type="button"
                     whileHover={{ x: 2 }}
                     whileTap={{ scale: 0.98 }}
-                    disabled={!selectedDate || !formData.preferredTime || !activeReservation}
+                    disabled={
+                      !formData.service ||
+                      !selectedDate ||
+                      !formData.preferredTime ||
+                      !activeReservation
+                    }
                     onClick={() => navigateToStep(3)}
                     className="px-6 py-3 min-h-[46px] rounded-xl bg-[#1E5AFF] hover:bg-[#0452FF] text-white text-xs sm:text-sm font-bold flex items-center gap-2 cursor-pointer transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -1814,22 +1984,31 @@ export default function BookingModal({
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="space-y-1">
-                    <span className="text-[11px] font-semibold uppercase tracking-wider text-[#1E5AFF]">
-                      Step 3 of 4
-                    </span>
                     <h3 className="text-lg sm:text-xl font-bold text-[#060C16]">
                       {formData.isNewPatient
                         ? "Enter Your Contact Details"
-                        : "Confirm Your Auto-Filled Details"}
+                        : "Confirm Your Details"}
                     </h3>
                   </div>
+                </div>
 
-                  {!formData.isNewPatient && autoFilled && (
-                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-semibold">
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>Auto-Filled from Verified Email</span>
+                {/* Selected Reason & Slot Summary Pill */}
+                <div className="p-3.5 rounded-2xl bg-[#F8FAFF] border border-[#DCE6FF] flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="min-w-0">
+                    <span className="text-[11px] font-semibold text-[#64748B] block">
+                      Selected Reason &amp; Appointment Time
                     </span>
-                  )}
+                    <span className="font-bold text-[#002156] block truncate">
+                      {formData.service} · {formattedSelectedDate} at {formData.preferredTime}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => navigateToStep(2)}
+                    className="text-xs font-bold text-[#1E5AFF] hover:underline cursor-pointer shrink-0"
+                  >
+                    Change
+                  </button>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1916,30 +2095,6 @@ export default function BookingModal({
                     </div>
                   </div>
 
-                  {/* Dental Service Selection */}
-                  <div className="sm:col-span-2 space-y-1.5">
-                    <label
-                      htmlFor={serviceSelectId}
-                      className="block text-xs font-bold text-[#060C16]"
-                    >
-                      Service / Reason for Visit
-                    </label>
-                    <select
-                      id={serviceSelectId}
-                      value={formData.service}
-                      onChange={(e) =>
-                        setFormData({ ...formData, service: e.target.value })
-                      }
-                      className="w-full px-3.5 py-2.5 min-h-[44px] rounded-xl border border-[#CBD5E1] bg-white text-xs sm:text-sm text-[#060C16] focus:outline-none focus:border-[#1E5AFF]"
-                    >
-                      {CLINICAL_SERVICES.map((svc) => (
-                        <option key={svc.id} value={svc.title}>
-                          {svc.title} ({svc.duration})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
                   {/* Optional Note */}
                   <div className="sm:col-span-2 space-y-1.5">
                     <label className="block text-xs font-bold text-[#060C16]">
@@ -1996,9 +2151,6 @@ export default function BookingModal({
                 className="space-y-5"
               >
                 <div className="space-y-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-[#1E5AFF]">
-                    Step 4 of 4
-                  </span>
                   <h3 className="text-lg sm:text-xl font-bold text-[#060C16]">
                     Review Your Appointment Summary
                   </h3>

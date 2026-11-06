@@ -33,15 +33,20 @@ import {
   ShieldCheck,
   Stethoscope,
   KeyRound,
+  Sun,
+  Sunset,
+  Moon,
 } from 'lucide-react';
 import { useAdminAuth } from '../../context/AdminAuthContext';
 import { getAdminAuthHeaders } from '../../lib/authHeaders';
+import { formatPortalGreeting } from '../../lib/greeting';
 import {
   subscribeToAppointments,
   updateAppointmentStatus,
   deleteAppointment,
   subscribeToEnquiries,
   updateEnquiryStatus,
+  deleteEnquiry,
   subscribeToDoctors,
   upsertDoctor,
   deleteDoctor,
@@ -57,6 +62,10 @@ import {
   TimeSlotGroup,
   DEFAULT_TIME_SLOT_GROUPS,
   fetchDoctorDateSlotStatuses,
+  subscribeToBookingServices,
+  upsertBookingService,
+  deleteBookingService,
+  resetBookingServicesToDefaults,
 } from '../../lib/firestoreService';
 import type {
   Appointment,
@@ -66,7 +75,12 @@ import type {
   ActivityLog,
   PracticeSettings,
 } from '../../types/admin';
-import type { ComputedTimeSlot } from '../../types/scheduling';
+import {
+  type ComputedTimeSlot,
+  type BookingServiceItem,
+  type SlotDurationMinutes,
+  DEFAULT_BOOKING_SERVICES,
+} from '../../types/scheduling';
 import DoctorAvailabilityManager from '../../components/DoctorAvailabilityManager';
 
 type TabType =
@@ -117,7 +131,7 @@ export default function AdminDashboardPage({
   onNavigateToPublic,
   onNavigateToLogin,
 }: AdminDashboardPageProps) {
-  const { user, loading: authLoading, signOut } = useAdminAuth();
+  const { user, loading: authLoading, refreshSession, signOut } = useAdminAuth();
 
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [searchQuery, setSearchQuery] = useState('');
@@ -134,7 +148,7 @@ export default function AdminDashboardPage({
     clinicName: 'First Avenue Family Dentistry',
     phone: '(519) 207-6890',
     email: 'firstavenuedentistry@gmail.com',
-    address: '308 Wellington street, St. Thomas, ON N5R 2S9',
+    address: '308 Wellington Street, St. Thomas, ON N5R 2S9',
     weekdayHours: '9:00 AM – 6:00 PM',
     saturdayHours: '9:00 AM – 5:00 PM',
     sundayHours: 'Closed',
@@ -216,6 +230,78 @@ export default function AdminDashboardPage({
     }
   };
 
+  // Resolve the current user's live role from adminAccounts directory or session (strict priority: id -> username -> email)
+  const currentUserRole = useMemo(() => {
+    const uId = user?.uid || '';
+    const uUsername = String((user as any)?.username || '').toLowerCase();
+    const uEmail = (user?.email || '').toLowerCase();
+
+    if (uId) {
+      const byId = adminAccounts.find((a) => a.id === uId);
+      if (byId?.role) return byId.role;
+    }
+    if (uUsername) {
+      const byUsername = adminAccounts.find((a) => a.username.toLowerCase() === uUsername);
+      if (byUsername?.role) return byUsername.role;
+    }
+    if (uEmail) {
+      const byEmail = adminAccounts.filter((a) => a.email.toLowerCase() === uEmail);
+      const superMatch = byEmail.find((a) => a.role.toLowerCase().includes('super'));
+      if (superMatch) return superMatch.role;
+      if (byEmail.length > 0) return byEmail[0].role;
+    }
+    return (user as any)?.role || 'Super Admin';
+  }, [user, adminAccounts]);
+
+  const roleTier = useMemo((): 'super_admin' | 'clinic_admin' | 'receptionist' | 'doctor' => {
+    const r = String(currentUserRole || '').trim().toLowerCase();
+    if (r === 'super admin' || r === 'superadmin' || r === 'owner' || r === 'primary super admin') {
+      return 'super_admin';
+    }
+    if (r === 'clinic admin' || r === 'admin' || r === 'administrator' || r === 'manager') {
+      return 'clinic_admin';
+    }
+    if (r === 'doctor' || r === 'dental specialist' || r === 'dentist') {
+      return 'doctor';
+    }
+    return 'receptionist';
+  }, [currentUserRole]);
+
+  const isSuperAdmin = roleTier === 'super_admin';
+  const isClinicAdmin = roleTier === 'clinic_admin';
+  const canManageAdmins = isSuperAdmin;
+  const canManageDoctors = isSuperAdmin || isClinicAdmin;
+  const canManageSettings = isSuperAdmin || isClinicAdmin;
+  const canManageLogs = isSuperAdmin;
+
+  const allowedTabs = useMemo((): TabType[] => {
+    if (roleTier === 'super_admin' || roleTier === 'clinic_admin') {
+      return [
+        'overview',
+        'appointments',
+        'enquiries',
+        'doctors',
+        'schedule',
+        'admins',
+        'reviews',
+        'analytics',
+        'settings',
+        'logs',
+      ];
+    }
+    if (roleTier === 'doctor') {
+      return ['overview', 'appointments', 'schedule'];
+    }
+    // Receptionist / Coordinator
+    return ['overview', 'appointments', 'enquiries', 'doctors', 'schedule', 'reviews'];
+  }, [roleTier]);
+
+  useEffect(() => {
+    if (!allowedTabs.includes(activeTab)) {
+      setActiveTab('overview');
+    }
+  }, [allowedTabs, activeTab]);
+
   // Settings save feedback
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [settingsLoading, setSettingsLoading] = useState(false);
@@ -227,6 +313,18 @@ export default function AdminDashboardPage({
   const [newSlotTime, setNewSlotTime] = useState('');
   const [newSlotPeriod, setNewSlotPeriod] = useState<string>('Morning');
   const [editingSlot, setEditingSlot] = useState<{ period: string; oldTime: string; newTime: string } | null>(null);
+
+  // Booking Form Services ("Select A Reason") Management State
+  const [bookingServices, setBookingServices] = useState<BookingServiceItem[]>(
+    DEFAULT_BOOKING_SERVICES
+  );
+  const [serviceSaving, setServiceSaving] = useState(false);
+  const [serviceBannerMessage, setServiceBannerMessage] = useState<string | null>(null);
+  const [editingServiceItem, setEditingServiceItem] = useState<BookingServiceItem | null>(null);
+  const [serviceFormTitle, setServiceFormTitle] = useState('');
+  const [serviceFormCategory, setServiceFormCategory] = useState('Preventive');
+  const [serviceFormDuration, setServiceFormDuration] = useState<SlotDurationMinutes>(45);
+  const [serviceFormAllowedDoctorIds, setServiceFormAllowedDoctorIds] = useState<string[]>([]);
 
   // Notifications dropdown
   const [showNotifications, setShowNotifications] = useState(false);
@@ -295,12 +393,19 @@ export default function AdminDashboardPage({
     };
   }, []);
 
-  // Redirect if unauthenticated
+  // Redirect if unauthenticated or if logged in with a Doctor-only portal session
   useEffect(() => {
-    if (!authLoading && !user) {
-      onNavigateToLogin();
+    if (!authLoading) {
+      if (!user) {
+        onNavigateToLogin();
+      } else if (
+        String((user as any).role || '').trim().toLowerCase() === 'doctor' &&
+        roleTier === 'doctor'
+      ) {
+        onNavigateToLogin();
+      }
     }
-  }, [user, authLoading, onNavigateToLogin]);
+  }, [user, authLoading, roleTier, onNavigateToLogin]);
 
   // 5-Minute Inactivity Auto-Logout Security Guard with Live Countdown
   useEffect(() => {
@@ -365,6 +470,14 @@ export default function AdminDashboardPage({
       }
     });
 
+    const unsubBookingServices = subscribeToBookingServices((services) => {
+      if (Array.isArray(services) && services.length > 0) {
+        setBookingServices(services);
+      } else {
+        setBookingServices(DEFAULT_BOOKING_SERVICES);
+      }
+    });
+
     getPracticeSettings().then((res) => {
       if (res) setPracticeSettings(res);
     });
@@ -378,8 +491,84 @@ export default function AdminDashboardPage({
       unsubReviews();
       unsubLogs();
       unsubTimeSlots();
+      unsubBookingServices();
     };
   }, [user]);
+
+  const handleSaveBookingServiceForm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanTitle = serviceFormTitle.trim();
+    if (!cleanTitle) return;
+    setServiceSaving(true);
+    setServiceBannerMessage(null);
+    try {
+      await upsertBookingService({
+        id: editingServiceItem?.id,
+        title: cleanTitle,
+        category: serviceFormCategory,
+        durationMinutes: serviceFormDuration,
+        allowedDoctorIds: serviceFormAllowedDoctorIds,
+        isActive: true,
+      });
+      setServiceBannerMessage(
+        editingServiceItem
+          ? `Updated service "${cleanTitle}".`
+          : `Added new service "${cleanTitle}" to the Patient Booking Form.`
+      );
+      setEditingServiceItem(null);
+      setServiceFormTitle('');
+      setServiceFormCategory('Preventive');
+      setServiceFormDuration(45);
+      setServiceFormAllowedDoctorIds([]);
+      setTimeout(() => setServiceBannerMessage(null), 5000);
+    } catch (err: any) {
+      setServiceBannerMessage(err?.message || 'Could not save booking service.');
+    } finally {
+      setServiceSaving(false);
+    }
+  };
+
+  const handleEditBookingServiceClick = (svc: BookingServiceItem) => {
+    setEditingServiceItem(svc);
+    setServiceFormTitle(svc.title);
+    setServiceFormCategory(svc.category || 'Preventive');
+    setServiceFormDuration((svc.durationMinutes || 45) as SlotDurationMinutes);
+    setServiceFormAllowedDoctorIds(Array.isArray(svc.allowedDoctorIds) ? svc.allowedDoctorIds : []);
+  };
+
+  const handleDeleteBookingServiceClick = async (svc: BookingServiceItem) => {
+    setServiceSaving(true);
+    setServiceBannerMessage(null);
+    try {
+      await deleteBookingService(svc.id);
+      if (editingServiceItem?.id === svc.id) {
+        setEditingServiceItem(null);
+        setServiceFormTitle('');
+      }
+      setServiceBannerMessage(`Removed "${svc.title}" from the Booking Form.`);
+      setTimeout(() => setServiceBannerMessage(null), 5000);
+    } catch (err: any) {
+      setServiceBannerMessage(err?.message || 'Could not remove booking service.');
+    } finally {
+      setServiceSaving(false);
+    }
+  };
+
+  const handleResetDefaultBookingServices = async () => {
+    setServiceSaving(true);
+    setServiceBannerMessage(null);
+    try {
+      await resetBookingServicesToDefaults();
+      setEditingServiceItem(null);
+      setServiceFormTitle('');
+      setServiceBannerMessage('Reset Booking Form services to the standard 9 clinic reasons.');
+      setTimeout(() => setServiceBannerMessage(null), 5000);
+    } catch (err: any) {
+      setServiceBannerMessage(err?.message || 'Could not reset booking services.');
+    } finally {
+      setServiceSaving(false);
+    }
+  };
 
   // Reset doctorFilter if the filtered doctor was deleted
   useEffect(() => {
@@ -426,7 +615,7 @@ export default function AdminDashboardPage({
     );
     const docKey = matchedDoc ? matchedDoc.id : assignedDoctorInput;
 
-    fetchDoctorDateSlotStatuses(docKey, confirmedDateInput)
+    fetchDoctorDateSlotStatuses(docKey, confirmedDateInput, undefined, selectedAppointment.service)
       .then((res) => {
         if (!cancelled) {
           setModalDoctorSlots(res.slots || []);
@@ -446,7 +635,7 @@ export default function AdminDashboardPage({
     return () => {
       cancelled = true;
     };
-  }, [selectedAppointment?.id, assignedDoctorInput, confirmedDateInput, doctors, appointments]);
+  }, [selectedAppointment?.id, selectedAppointment?.service, assignedDoctorInput, confirmedDateInput, doctors, appointments]);
 
   // Computed metrics
   const metrics = useMemo(() => {
@@ -726,7 +915,7 @@ export default function AdminDashboardPage({
       return;
     }
     if (!doctorForm.email.trim()) {
-      setDoctorFormError('Doctor email address is required to send portal login credentials and 2FA codes.');
+      setDoctorFormError('Doctor email address is required to send portal login credentials.');
       return;
     }
     if (!doctorForm.username.trim()) {
@@ -822,6 +1011,36 @@ export default function AdminDashboardPage({
     setAdminModalOpen(true);
   };
 
+  const handleQuickRoleChange = async (acc: StaffAdminAccount, newRole: string) => {
+    if (!canManageAdmins || acc.role === newRole) return;
+    try {
+      const res = await fetch(`/api/admin/users/${acc.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAdminAuthHeaders(),
+        },
+        body: JSON.stringify({
+          name: acc.name,
+          username: acc.username,
+          email: acc.email,
+          role: newRole,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to update staff role.');
+      }
+      await fetchAdminAccounts();
+      await refreshSession();
+      setAdminBannerMessage(`Updated role for ${acc.name} (@${acc.username}) to "${newRole}".`);
+      setTimeout(() => setAdminBannerMessage(null), 4000);
+    } catch (err: any) {
+      setAdminBannerMessage(err?.message || 'Could not update role.');
+      setTimeout(() => setAdminBannerMessage(null), 4000);
+    }
+  };
+
   const handleSaveAdminAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     setAdminFormError(null);
@@ -848,8 +1067,11 @@ export default function AdminDashboardPage({
           throw new Error(data.error || 'Failed to update administrator account.');
         }
         await fetchAdminAccounts();
+        await refreshSession();
         setAdminModalOpen(false);
-        setAdminBannerMessage(`Updated staff account for ${adminForm.name.trim()}.`);
+        setAdminBannerMessage(
+          `Updated account & role (${adminForm.role}) for ${adminForm.name.trim()}.`
+        );
         setTimeout(() => setAdminBannerMessage(null), 4000);
       } else {
         const res = await fetch('/api/admin/users', {
@@ -871,9 +1093,10 @@ export default function AdminDashboardPage({
           throw new Error(data.error || 'Failed to create administrator account.');
         }
         await fetchAdminAccounts();
+        await refreshSession();
         setAdminModalOpen(false);
         setAdminBannerMessage(
-          `Added new ${adminForm.role} "${adminForm.name.trim()}" (${adminForm.email.trim()}). Welcome & 2FA instructions sent via Gmail!`
+          `Added new ${adminForm.role} "${adminForm.name.trim()}" (@${adminForm.username.trim()}). Account is active for direct portal login.`
         );
         setTimeout(() => setAdminBannerMessage(null), 5000);
       }
@@ -1069,6 +1292,17 @@ export default function AdminDashboardPage({
 
   const adminPassStrength = evaluatePasswordStrength(adminForm.password);
 
+  const staffGreeting = formatPortalGreeting(
+    user?.displayName || (user as any)?.name || (user as any)?.username || user?.email || 'Administrator',
+    'admin'
+  );
+  const GreetingIcon =
+    staffGreeting.period === 'morning'
+      ? Sun
+      : staffGreeting.period === 'afternoon'
+      ? Sunset
+      : Moon;
+
   return (
     <div className="min-h-screen bg-[#F8FAFC] text-[#060C16] flex font-sans antialiased overflow-x-hidden">
       {/* MOBILE SIDEBAR BACKDROP OVERLAY */}
@@ -1108,172 +1342,192 @@ export default function AdminDashboardPage({
             </button>
           </div>
 
-          {/* Navigation Links */}
+          {/* Navigation Links (Filtered by Role-Based Access Control) */}
           <nav className="p-3.5 sm:p-4 space-y-1 text-xs font-semibold">
-            <button
-              type="button"
-              onClick={() => handleSelectNavTab('overview')}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'overview'
-                  ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
-                  : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <BarChart3 className="w-4 h-4 shrink-0" />
-                <span className="truncate">Dashboard Overview</span>
-              </div>
-            </button>
+            {allowedTabs.includes('overview') && (
+              <button
+                type="button"
+                onClick={() => handleSelectNavTab('overview')}
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
+                  activeTab === 'overview'
+                    ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
+                    : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <BarChart3 className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Dashboard Overview</span>
+                </div>
+              </button>
+            )}
 
-            <button
-              type="button"
-              onClick={() => handleSelectNavTab('appointments')}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'appointments'
-                  ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
-                  : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <Calendar className="w-4 h-4 shrink-0" />
-                <span className="truncate">Appointments</span>
-              </div>
-              {metrics.pending > 0 && (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-white shrink-0">
-                  {metrics.pending}
+            {allowedTabs.includes('appointments') && (
+              <button
+                type="button"
+                onClick={() => handleSelectNavTab('appointments')}
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
+                  activeTab === 'appointments'
+                    ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
+                    : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <Calendar className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Appointments</span>
+                </div>
+                {metrics.pending > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500 text-white shrink-0">
+                    {metrics.pending}
+                  </span>
+                )}
+              </button>
+            )}
+
+            {allowedTabs.includes('enquiries') && (
+              <button
+                type="button"
+                onClick={() => handleSelectNavTab('enquiries')}
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
+                  activeTab === 'enquiries'
+                    ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
+                    : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <MessageSquare className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Patient Inquiries</span>
+                </div>
+                {metrics.newEnquiriesCount > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#1E5AFF] text-white shrink-0">
+                    {metrics.newEnquiriesCount}
+                  </span>
+                )}
+              </button>
+            )}
+
+            {allowedTabs.includes('doctors') && (
+              <button
+                type="button"
+                onClick={() => handleSelectNavTab('doctors')}
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
+                  activeTab === 'doctors'
+                    ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
+                    : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <Users className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Doctors &amp; Specialists</span>
+                </div>
+                <span className="text-[11px] text-[#8E8E93] shrink-0">{doctors.length}</span>
+              </button>
+            )}
+
+            {allowedTabs.includes('schedule') && (
+              <button
+                type="button"
+                onClick={() => handleSelectNavTab('schedule')}
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
+                  activeTab === 'schedule'
+                    ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
+                    : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <CalendarClock className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Services &amp; Schedule</span>
+                </div>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold shrink-0">
+                  {bookingServices.length}
                 </span>
-              )}
-            </button>
+              </button>
+            )}
 
-            <button
-              type="button"
-              onClick={() => handleSelectNavTab('enquiries')}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'enquiries'
-                  ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
-                  : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <MessageSquare className="w-4 h-4 shrink-0" />
-                <span className="truncate">Patient Inquiries</span>
-              </div>
-              {metrics.newEnquiriesCount > 0 && (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#1E5AFF] text-white shrink-0">
-                  {metrics.newEnquiriesCount}
-                </span>
-              )}
-            </button>
+            {allowedTabs.includes('admins') && (
+              <button
+                type="button"
+                onClick={() => handleSelectNavTab('admins')}
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
+                  activeTab === 'admins'
+                    ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
+                    : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <Shield className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Admins &amp; Staff</span>
+                </div>
+                <span className="text-[11px] text-[#8E8E93] shrink-0">{adminAccounts.length}</span>
+              </button>
+            )}
 
-            <button
-              type="button"
-              onClick={() => handleSelectNavTab('doctors')}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'doctors'
-                  ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
-                  : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <Users className="w-4 h-4 shrink-0" />
-                <span className="truncate">Doctors &amp; Specialists</span>
-              </div>
-              <span className="text-[11px] text-[#8E8E93] shrink-0">{doctors.length}</span>
-            </button>
+            {allowedTabs.includes('reviews') && (
+              <button
+                type="button"
+                onClick={() => handleSelectNavTab('reviews')}
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
+                  activeTab === 'reviews'
+                    ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
+                    : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <Star className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Reviews Moderation</span>
+                </div>
+              </button>
+            )}
 
-            <button
-              type="button"
-              onClick={() => handleSelectNavTab('schedule')}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'schedule'
-                  ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
-                  : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <CalendarClock className="w-4 h-4 shrink-0" />
-                <span className="truncate">Schedule &amp; Time Slots</span>
-              </div>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold shrink-0">
-                Live
-              </span>
-            </button>
+            {allowedTabs.includes('analytics') && (
+              <button
+                type="button"
+                onClick={() => handleSelectNavTab('analytics')}
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
+                  activeTab === 'analytics'
+                    ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
+                    : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <BarChart3 className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Analytics &amp; Reports</span>
+                </div>
+              </button>
+            )}
 
-            <button
-              type="button"
-              onClick={() => handleSelectNavTab('admins')}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'admins'
-                  ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
-                  : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <Shield className="w-4 h-4 shrink-0" />
-                <span className="truncate">Admins &amp; Staff (2FA)</span>
-              </div>
-              <span className="text-[11px] text-[#8E8E93] shrink-0">{adminAccounts.length}</span>
-            </button>
+            {allowedTabs.includes('settings') && (
+              <button
+                type="button"
+                onClick={() => handleSelectNavTab('settings')}
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
+                  activeTab === 'settings'
+                    ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
+                    : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <Settings className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Practice Settings</span>
+                </div>
+              </button>
+            )}
 
-            <button
-              type="button"
-              onClick={() => handleSelectNavTab('reviews')}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'reviews'
-                  ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
-                  : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <Star className="w-4 h-4 shrink-0" />
-                <span className="truncate">Reviews Moderation</span>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleSelectNavTab('analytics')}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'analytics'
-                  ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
-                  : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <BarChart3 className="w-4 h-4 shrink-0" />
-                <span className="truncate">Analytics &amp; Reports</span>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleSelectNavTab('settings')}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'settings'
-                  ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
-                  : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <Settings className="w-4 h-4 shrink-0" />
-                <span className="truncate">Practice Settings</span>
-              </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleSelectNavTab('logs')}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
-                activeTab === 'logs'
-                  ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
-                  : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
-              }`}
-            >
-              <div className="flex items-center gap-3 min-w-0">
-                <History className="w-4 h-4 shrink-0" />
-                <span className="truncate">Audit &amp; Activity Log</span>
-              </div>
-            </button>
+            {allowedTabs.includes('logs') && (
+              <button
+                type="button"
+                onClick={() => handleSelectNavTab('logs')}
+                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl transition-all cursor-pointer ${
+                  activeTab === 'logs'
+                    ? 'bg-[#1E5AFF] text-white shadow-md shadow-[#1E5AFF]/20'
+                    : 'text-[#8E8E93] hover:text-white hover:bg-white/5'
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <History className="w-4 h-4 shrink-0" />
+                  <span className="truncate">Audit &amp; Activity Log</span>
+                </div>
+              </button>
+            )}
           </nav>
         </div>
 
@@ -1291,13 +1545,12 @@ export default function AdminDashboardPage({
           <div className="flex items-center justify-between pt-2 gap-2">
             <div className="flex items-center gap-2 overflow-hidden min-w-0">
               <div className="w-7 h-7 rounded-full bg-[#1E5AFF] text-white flex items-center justify-center text-xs font-bold shrink-0">
-                {user?.email?.charAt(0).toUpperCase() || 'A'}
+                {(user?.displayName || user?.email || 'A').charAt(0).toUpperCase()}
               </div>
               <div className="truncate min-w-0">
                 <span className="block text-[11px] font-semibold text-white truncate">
-                  {user?.email || 'Clinical Administrator'}
+                  {user?.displayName || user?.email || 'Administrator'}
                 </span>
-                <span className="block text-[10px] text-[#8E8E93] truncate">2FA Verified Session</span>
               </div>
             </div>
 
@@ -1329,10 +1582,10 @@ export default function AdminDashboardPage({
             </button>
 
             <div className="flex items-center gap-2 text-xs text-[#64748B] min-w-0">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-              <span className="font-semibold text-[#060C16] truncate">Clinical Management Live</span>
-              <span className="hidden sm:inline">•</span>
-              <span className="hidden sm:inline truncate">308 Wellington street, St. Thomas, ON N5R 2S9</span>
+              <GreetingIcon className="w-4 h-4 text-amber-500 shrink-0" />
+              <span className="font-bold text-[#060C16] truncate">
+                {staffGreeting.fullGreeting}
+              </span>
             </div>
           </div>
 
@@ -1461,10 +1714,10 @@ export default function AdminDashboardPage({
               <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
                 <div>
                   <h2 className="text-xl sm:text-2xl font-bold text-[#060C16] tracking-tight">
-                    Clinical Practice Overview
+                    {staffGreeting.fullGreeting}
                   </h2>
                   <p className="text-xs text-[#64748B] mt-0.5">
-                    Live operational activity for First Avenue Family Dentistry, St. Thomas, ON.
+                    First Avenue Family Dentistry, St. Thomas, ON.
                   </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
@@ -2124,6 +2377,14 @@ export default function AdminDashboardPage({
                               Reopen Inquiry
                             </button>
                           )}
+                          <button
+                            type="button"
+                            onClick={() => deleteEnquiry(enq.id)}
+                            className="p-1.5 rounded-xl text-rose-500 hover:text-rose-700 hover:bg-rose-50 transition-colors cursor-pointer border border-rose-200"
+                            title="Delete Inquiry"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -2145,14 +2406,16 @@ export default function AdminDashboardPage({
                     Manage active staff, credentials, and availability. Changes sync immediately to both the Booking Form and Appointment Management.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleOpenDoctorModal()}
-                  className="px-4 py-2.5 rounded-xl bg-[#1E5AFF] hover:bg-[#0452FF] text-white text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm shadow-[#1E5AFF]/20 self-start sm:self-auto"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Register Specialist</span>
-                </button>
+                {canManageDoctors && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenDoctorModal()}
+                    className="px-4 py-2.5 rounded-xl bg-[#1E5AFF] hover:bg-[#0452FF] text-white text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm shadow-[#1E5AFF]/20 self-start sm:self-auto"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Register Specialist</span>
+                  </button>
+                )}
               </div>
 
               {doctorBannerMessage && (
@@ -2169,14 +2432,16 @@ export default function AdminDashboardPage({
                   <p className="text-xs text-[#64748B] max-w-md mx-auto">
                     Register a clinical specialist with a username, password, and email address to grant them access to the Doctor Portal and patient booking calendar.
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => handleOpenDoctorModal()}
-                    className="px-4 py-2 rounded-xl bg-[#1E5AFF] hover:bg-[#0452FF] text-white text-xs font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>Register First Doctor</span>
-                  </button>
+                  {canManageDoctors && (
+                    <button
+                      type="button"
+                      onClick={() => handleOpenDoctorModal()}
+                      className="px-4 py-2 rounded-xl bg-[#1E5AFF] hover:bg-[#0452FF] text-white text-xs font-semibold transition-colors cursor-pointer inline-flex items-center gap-1.5"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Register First Doctor</span>
+                    </button>
+                  )}
                 </div>
               ) : null}
 
@@ -2203,14 +2468,14 @@ export default function AdminDashboardPage({
                               : 'bg-slate-100 text-slate-700 border border-slate-200'
                           }`}
                         >
-                          {doc.status === 'active' ? 'Active / On Duty' : 'On Leave'}
+                          {doc.status === 'active' ? 'Active' : 'On Leave'}
                         </span>
                       </div>
 
                       <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                         <div className="truncate">
                           <span className="text-[10px] uppercase tracking-wider font-bold text-[#64748B] block">
-                            Doctor Portal Login
+                            Username
                           </span>
                           <span className="font-mono font-bold text-[#060C16]">
                             @{doc.username || doc.name.toLowerCase().replace(/[^a-z0-9.]/g, '')}
@@ -2218,7 +2483,7 @@ export default function AdminDashboardPage({
                         </div>
                         <div className="truncate">
                           <span className="text-[10px] uppercase tracking-wider font-bold text-[#64748B] block">
-                            Portal Email (2FA)
+                            Email
                           </span>
                           <span className="font-medium text-[#334155]">
                             {doc.email || 'Not configured'}
@@ -2253,59 +2518,295 @@ export default function AdminDashboardPage({
                       )}
                     </div>
 
-                    <div className="pt-4 border-t border-[#E2E8F0] flex flex-wrap items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          upsertDoctor(
-                            {
-                              ...doc,
-                              status: doc.status === 'active' ? 'on_leave' : 'active',
-                            },
-                            doc.id,
-                            user?.email || 'firstavenuedentistry@gmail.com'
-                          )
-                        }
-                        className="text-xs font-semibold text-[#64748B] hover:text-[#060C16] cursor-pointer"
-                      >
-                        Toggle Status ({doc.status === 'active' ? 'Set On Leave' : 'Set Active'})
-                      </button>
-
-                      <div className="flex items-center gap-2 ml-auto">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenDoctorModal(doc)}
-                          className="px-3.5 py-1.5 rounded-xl bg-[#F1F5F9] hover:bg-[#E2E8F0] text-xs font-semibold text-[#060C16] flex items-center gap-1.5 transition-colors cursor-pointer"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                          <span>Edit Profile</span>
-                        </button>
+                    {canManageDoctors && (
+                      <div className="pt-4 border-t border-[#E2E8F0] flex flex-wrap items-center justify-between gap-2">
                         <button
                           type="button"
                           onClick={() =>
-                            setDeleteTarget({
-                              type: 'doctor',
-                              id: doc.id,
-                              name: doc.name,
-                            })
+                            upsertDoctor(
+                              {
+                                ...doc,
+                                status: doc.status === 'active' ? 'on_leave' : 'active',
+                              },
+                              doc.id,
+                              user?.email || 'firstavenuedentistry@gmail.com'
+                            )
                           }
-                          className="p-1.5 rounded-xl text-rose-500 hover:text-rose-700 hover:bg-rose-50 transition-colors cursor-pointer border border-rose-200"
-                          title="Delete Doctor Profile"
+                          className="text-xs font-semibold text-[#64748B] hover:text-[#060C16] cursor-pointer"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          Toggle Status ({doc.status === 'active' ? 'Set On Leave' : 'Set Active'})
                         </button>
+
+                        <div className="flex items-center gap-2 ml-auto">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenDoctorModal(doc)}
+                            className="px-3.5 py-1.5 rounded-xl bg-[#F1F5F9] hover:bg-[#E2E8F0] text-xs font-semibold text-[#060C16] flex items-center gap-1.5 transition-colors cursor-pointer"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                            <span>Edit Profile</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDeleteTarget({
+                                type: 'doctor',
+                                id: doc.id,
+                                name: doc.name,
+                              })
+                            }
+                            className="p-1.5 rounded-xl text-rose-500 hover:text-rose-700 hover:bg-rose-50 transition-colors cursor-pointer border border-rose-200"
+                            title="Delete Doctor Profile"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 ))}
               </div>
             </div>
           )}
 
-          {/* TAB 4B: SCHEDULE & TIME SLOTS MANAGEMENT */}
+          {/* TAB 4B: BOOKING SERVICES & SCHEDULE MANAGEMENT */}
           {activeTab === 'schedule' && (
             <div className="space-y-8">
-              {/* Per-Doctor Appointment Availability Manager */}
+              {/* 1. Booking Form Services ("Select A Reason") Manager */}
+              <div className="p-5 sm:p-6 rounded-2xl bg-white border border-[#E2E8F0] shadow-xs space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#F1F5F9]">
+                  <div>
+                    <h2 className="text-lg sm:text-xl font-bold text-[#060C16] tracking-tight">
+                      Booking Services
+                    </h2>
+                    <p className="text-xs text-[#64748B] mt-0.5">
+                      Add new dental services, edit existing reasons, or remove services from the Patient Booking Form.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleResetDefaultBookingServices}
+                    disabled={serviceSaving}
+                    className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white border border-[#E2E8F0] hover:bg-[#F8FAFC] text-xs font-semibold text-[#64748B] hover:text-[#060C16] transition-colors cursor-pointer shadow-2xs disabled:opacity-50 self-start sm:self-auto shrink-0"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${serviceSaving ? 'animate-spin' : ''}`} />
+                    <span>Reset Default 9 Reasons</span>
+                  </button>
+                </div>
+
+                {serviceBannerMessage && (
+                  <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>{serviceBannerMessage}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setServiceBannerMessage(null)}
+                      className="text-xs font-bold underline cursor-pointer"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+
+                {/* Add / Edit Booking Service Form */}
+                <form
+                  onSubmit={handleSaveBookingServiceForm}
+                  className="p-4 rounded-2xl bg-[#F8FAFF] border border-[#DCE6FF] space-y-4"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-[#002156]">
+                      {editingServiceItem
+                        ? `Editing Service: ${editingServiceItem.title}`
+                        : 'Add New Service / Reason to Booking Form'}
+                    </span>
+                    {editingServiceItem && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingServiceItem(null);
+                          setServiceFormTitle('');
+                          setServiceFormCategory('Preventive');
+                          setServiceFormDuration(45);
+                          setServiceFormAllowedDoctorIds([]);
+                        }}
+                        className="text-xs font-bold text-[#64748B] hover:text-[#060C16] cursor-pointer"
+                      >
+                        Cancel Edit
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                    <div className="sm:col-span-6 space-y-1">
+                      <label className="block text-[11px] font-bold text-[#475569] uppercase">
+                        Service / Reason Title *
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={serviceFormTitle}
+                        onChange={(e) => setServiceFormTitle(e.target.value)}
+                        placeholder="e.g. Teeth Whitening or New Patient Exam- All ages"
+                        className="w-full px-3.5 py-2.5 min-h-[42px] rounded-xl border border-[#CBD5E1] bg-white text-xs font-bold text-[#060C16] focus:outline-none focus:border-[#1E5AFF]"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-3 space-y-1">
+                      <label className="block text-[11px] font-bold text-[#475569] uppercase">
+                        Category
+                      </label>
+                      <select
+                        value={serviceFormCategory}
+                        onChange={(e) => setServiceFormCategory(e.target.value)}
+                        className="w-full px-3 py-2.5 min-h-[42px] rounded-xl border border-[#CBD5E1] bg-white text-xs font-bold text-[#060C16] focus:outline-none focus:border-[#1E5AFF]"
+                      >
+                        <option value="Preventive">Preventive</option>
+                        <option value="Emergency">Emergency</option>
+                        <option value="Cosmetic">Cosmetic</option>
+                        <option value="Special Offer">Special Offer</option>
+                        <option value="Family">Family</option>
+                        <option value="Clinical">Clinical</option>
+                      </select>
+                    </div>
+
+                    <div className="sm:col-span-3 space-y-1">
+                      <label className="block text-[11px] font-bold text-[#475569] uppercase">
+                        Slot Duration
+                      </label>
+                      <select
+                        value={serviceFormDuration}
+                        onChange={(e) =>
+                          setServiceFormDuration(Number(e.target.value) as SlotDurationMinutes)
+                        }
+                        className="w-full px-3 py-2.5 min-h-[42px] rounded-xl border border-[#CBD5E1] bg-white text-xs font-bold text-[#060C16] focus:outline-none focus:border-[#1E5AFF]"
+                      >
+                        <option value={15}>15 Minutes</option>
+                        <option value={30}>30 Minutes</option>
+                        <option value={45}>45 Minutes</option>
+                        <option value={60}>60 Minutes</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Assigned Doctors Filter (Optional) */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[11px] font-bold text-[#475569]">
+                        Available Doctors for this Service:
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setServiceFormAllowedDoctorIds([])}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border cursor-pointer transition-colors ${
+                          serviceFormAllowedDoctorIds.length === 0
+                            ? 'bg-[#060C16] text-white border-[#060C16]'
+                            : 'bg-white text-[#475569] border-[#CBD5E1]'
+                        }`}
+                      >
+                        All Active Doctors
+                      </button>
+                      {activeDoctors.map((doc) => {
+                        const checked = serviceFormAllowedDoctorIds.includes(doc.id);
+                        return (
+                          <button
+                            key={doc.id}
+                            type="button"
+                            onClick={() =>
+                              setServiceFormAllowedDoctorIds((prev) =>
+                                prev.includes(doc.id)
+                                  ? prev.filter((id) => id !== doc.id)
+                                  : [...prev, doc.id]
+                              )
+                            }
+                            className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border cursor-pointer transition-colors ${
+                              checked
+                                ? 'bg-[#1E5AFF] text-white border-[#1E5AFF]'
+                                : 'bg-white text-[#475569] border-[#CBD5E1]'
+                            }`}
+                          >
+                            {doc.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={serviceSaving || !serviceFormTitle.trim()}
+                      className="px-5 py-2.5 min-h-[40px] rounded-xl bg-[#1E5AFF] hover:bg-[#0452FF] text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer transition-colors disabled:opacity-50 shrink-0"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>
+                        {serviceSaving
+                          ? 'Saving...'
+                          : editingServiceItem
+                          ? 'Update Service'
+                          : 'Add Service to Booking Form'}
+                      </span>
+                    </button>
+                  </div>
+                </form>
+
+                {/* Active Booking Services List */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {bookingServices.map((svc, idx) => (
+                    <div
+                      key={svc.id}
+                      className="p-3.5 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] hover:border-[#CBD5E1] flex items-center justify-between gap-3 transition-all"
+                    >
+                      <div className="min-w-0 space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="w-5 h-5 rounded-md bg-[#EAF1FF] text-[#1E5AFF] text-[10px] font-bold flex items-center justify-center shrink-0">
+                            {idx + 1}
+                          </span>
+                          <span className="text-xs sm:text-sm font-bold text-[#060C16] truncate">
+                            {svc.title}
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 pl-7 text-[11px] text-[#64748B]">
+                          <span>{svc.category || 'Clinical'}</span>
+                          <span>·</span>
+                          <span className="font-semibold text-[#1E5AFF]">
+                            {svc.durationMinutes || 45} mins
+                          </span>
+                          {Array.isArray(svc.allowedDoctorIds) &&
+                            svc.allowedDoctorIds.length > 0 && (
+                              <>
+                                <span>·</span>
+                                <span>{svc.allowedDoctorIds.length} Specific Doctor(s)</span>
+                              </>
+                            )}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleEditBookingServiceClick(svc)}
+                          className="p-1.5 rounded-lg text-[#64748B] hover:text-[#1E5AFF] hover:bg-white transition-colors cursor-pointer"
+                          title="Edit Service"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteBookingServiceClick(svc)}
+                          disabled={serviceSaving}
+                          className="p-1.5 rounded-lg text-[#94A3B8] hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                          title="Remove Service from Booking Form"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 2. Per-Doctor & Per-Service Appointment Availability Manager */}
               <DoctorAvailabilityManager
                 doctors={doctors}
                 allowDoctorSwitch={true}
@@ -2314,19 +2815,11 @@ export default function AdminDashboardPage({
 
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pt-6 border-t border-[#E2E8F0]">
                 <div>
-                  <div className="flex flex-wrap items-center gap-2 mb-1">
-                    <span className="text-xs font-bold text-[#1E5AFF] uppercase tracking-wider">
-                      Live Dynamic Availability
-                    </span>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                      Syncs to Booking Modal &amp; Appointment Manager
-                    </span>
-                  </div>
                   <h2 className="text-xl sm:text-2xl font-bold text-[#060C16] tracking-tight">
                     Clinical Schedule &amp; Time Slots
                   </h2>
                   <p className="text-xs text-[#64748B] mt-0.5">
-                    Add new appointment slots, modify existing times, or remove slots. Any changes update the patient booking form and admin approval dropdowns immediately.
+                    Add new appointment slots, modify existing times, or remove slots.
                   </p>
                 </div>
 
@@ -2540,73 +3033,24 @@ export default function AdminDashboardPage({
             <div className="space-y-6">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
-                  <div className="flex flex-wrap items-center gap-2 mb-1">
-                    <span className="text-xs font-bold text-[#1E5AFF] uppercase tracking-wider">
-                      Role-Based Access &amp; 2FA Security
-                    </span>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                      Mandatory Login OTP Active
-                    </span>
-                  </div>
                   <h2 className="text-xl sm:text-2xl font-bold text-[#060C16] tracking-tight">
                     Administrators &amp; Staff Accounts
                   </h2>
                   <p className="text-xs text-[#64748B] mt-0.5">
-                    Add new administrators, dentists, or receptionists. Every registered staff account requires a 6-digit Gmail OTP verification code at sign-in and is protected against brute-force login attempts.
+                    Manage Super Admins, Clinic Admins, Receptionists, and Dental Specialists.
                   </p>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => handleOpenAdminModal()}
-                  className="px-4 py-2.5 rounded-xl bg-[#1E5AFF] hover:bg-[#0452FF] text-white text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm shadow-[#1E5AFF]/20 self-start sm:self-auto shrink-0"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>Add New Admin / Staff</span>
-                </button>
-              </div>
-
-              {/* Enterprise Security Posture Summary */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-                <div className="p-4 rounded-2xl bg-white border border-[#E2E8F0] flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-xl bg-[#EFF6FF] text-[#1E5AFF] flex items-center justify-center shrink-0">
-                    <ShieldCheck className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <span className="block text-xs font-bold text-[#060C16]">Mandatory 2FA OTP</span>
-                    <span className="block text-[11px] text-[#64748B]">6-digit Gmail code required on every staff sign-in</span>
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-2xl bg-white border border-[#E2E8F0] flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">
-                    <Lock className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <span className="block text-xs font-bold text-[#060C16]">Brute-Force Lockout</span>
-                    <span className="block text-[11px] text-[#64748B]">Auto-locks account for 15 mins after 5 failed tries</span>
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-2xl bg-white border border-[#E2E8F0] flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0">
-                    <Clock className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <span className="block text-xs font-bold text-[#060C16]">5-Min Idle Auto-Logout</span>
-                    <span className="block text-[11px] text-[#64748B]">Active timer ({formatCountdown(idleSecondsLeft)} remaining)</span>
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-2xl bg-white border border-[#E2E8F0] flex items-start gap-3">
-                  <div className="w-8 h-8 rounded-xl bg-sky-50 text-sky-600 flex items-center justify-center shrink-0">
-                    <History className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <span className="block text-xs font-bold text-[#060C16]">Tamper-Evident Audit</span>
-                    <span className="block text-[11px] text-[#64748B]">Logs all doctor, schedule &amp; status updates</span>
-                  </div>
-                </div>
+                {canManageAdmins && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenAdminModal()}
+                    className="px-4 py-2.5 rounded-xl bg-[#1E5AFF] hover:bg-[#0452FF] text-white text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1.5 shadow-sm shadow-[#1E5AFF]/20 self-start sm:self-auto shrink-0"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Add New Admin / Staff</span>
+                  </button>
+                )}
               </div>
 
               {adminBannerMessage && (
@@ -2642,18 +3086,27 @@ export default function AdminDashboardPage({
                               </span>
                             </div>
                           </div>
-                          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-[#EFF6FF] text-[#1E5AFF] border border-[#BFDBFE] shrink-0">
-                            {acc.role}
-                          </span>
+                          {canManageAdmins ? (
+                            <select
+                              aria-label={`Change role for ${acc.name}`}
+                              value={acc.role}
+                              onChange={(e) => handleQuickRoleChange(acc, e.target.value)}
+                              className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-[#EFF6FF] text-[#1E5AFF] border border-[#BFDBFE] shrink-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-[#1E5AFF]"
+                            >
+                              <option value="Super Admin">Super Admin</option>
+                              <option value="Clinic Admin">Clinic Admin</option>
+                              <option value="Receptionist / Coordinator">Receptionist / Coordinator</option>
+                              <option value="Dental Specialist">Dental Specialist</option>
+                            </select>
+                          ) : (
+                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-[#EFF6FF] text-[#1E5AFF] border border-[#BFDBFE] shrink-0">
+                              {acc.role}
+                            </span>
+                          )}
                         </div>
 
-                        <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-1.5 text-xs">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[#64748B] text-[11px]">2FA &amp; Reset Email:</span>
-                            <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded">
-                              2FA Enabled
-                            </span>
-                          </div>
+                        <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-1 text-xs">
+                          <span className="text-[#64748B] text-[11px] block">Email</span>
                           <div className="font-semibold text-[#060C16] truncate flex items-center gap-1.5">
                             <Mail className="w-3.5 h-3.5 text-[#1E5AFF] shrink-0" />
                             <span className="truncate">{acc.email}</span>
@@ -2661,33 +3114,35 @@ export default function AdminDashboardPage({
                         </div>
                       </div>
 
-                      <div className="pt-3 border-t border-[#E2E8F0] flex items-center justify-between gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenAdminModal(acc)}
-                          className="px-3 py-1.5 rounded-xl bg-[#F1F5F9] hover:bg-[#E2E8F0] text-xs font-semibold text-[#060C16] flex items-center gap-1.5 transition-colors cursor-pointer"
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                          <span>Edit / Change Pass</span>
-                        </button>
-
-                        {adminAccounts.length > 1 && (
+                      {canManageAdmins && (
+                        <div className="pt-3 border-t border-[#E2E8F0] flex items-center justify-between gap-2">
                           <button
                             type="button"
-                            onClick={() =>
-                              setDeleteTarget({
-                                type: 'admin_user',
-                                id: acc.id,
-                                name: `${acc.name} (@${acc.username})`,
-                              })
-                            }
-                            className="p-1.5 rounded-xl text-rose-500 hover:text-rose-700 hover:bg-rose-50 transition-colors cursor-pointer border border-rose-200"
-                            title="Remove Administrator"
+                            onClick={() => handleOpenAdminModal(acc)}
+                            className="px-3 py-1.5 rounded-xl bg-[#F1F5F9] hover:bg-[#E2E8F0] text-xs font-semibold text-[#060C16] flex items-center gap-1.5 transition-colors cursor-pointer"
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Edit2 className="w-3.5 h-3.5" />
+                            <span>Edit Role / Password</span>
                           </button>
-                        )}
-                      </div>
+
+                          {adminAccounts.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setDeleteTarget({
+                                  type: 'admin_user',
+                                  id: acc.id,
+                                  name: `${acc.name} (@${acc.username})`,
+                                })
+                              }
+                              className="p-1.5 rounded-xl text-rose-500 hover:text-rose-700 hover:bg-rose-50 transition-colors cursor-pointer border border-rose-200"
+                              title="Remove Administrator"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))
                 )}
@@ -2865,7 +3320,7 @@ export default function AdminDashboardPage({
             <div className="space-y-6 max-w-3xl">
               <div>
                 <h2 className="text-xl sm:text-2xl font-bold text-[#060C16] tracking-tight">
-                  Practice Operational Settings
+                  Practice Settings
                 </h2>
                 <p className="text-xs text-[#64748B] mt-0.5">
                   Update official clinic details, operating hours, and patient reception phone numbers.
@@ -3037,7 +3492,7 @@ export default function AdminDashboardPage({
                     Tamper-evident record of all patient actions, status updates, and administrative modifications.
                   </p>
                 </div>
-                {activityLogs.length > 0 && (
+                {activityLogs.length > 0 && canManageLogs && (
                   <button
                     type="button"
                     onClick={() => setDeleteTarget({ type: 'audit_all', name: 'All Audit Logs' })}
@@ -3080,20 +3535,22 @@ export default function AdminDashboardPage({
                             Executed by: {log.adminEmail}
                           </span>
                         </div>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setDeleteTarget({
-                              type: 'audit_single',
-                              id: log.id,
-                              name: log.action,
-                            })
-                          }
-                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors shrink-0 cursor-pointer"
-                          title="Delete this audit record"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                        {canManageLogs && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setDeleteTarget({
+                                type: 'audit_single',
+                                id: log.id,
+                                name: log.action,
+                              })
+                            }
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors shrink-0 cursor-pointer"
+                            title="Delete this audit record"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -3126,9 +3583,6 @@ export default function AdminDashboardPage({
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2 mb-1">
-                    <span className="text-xs font-bold text-[#1E5AFF]">
-                      Patient Appointment Dossier
-                    </span>
                     <span
                       className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
                         selectedAppointment.status === 'approved'
@@ -3811,10 +4265,7 @@ export default function AdminDashboardPage({
                   <div className="flex items-center justify-between">
                     <span className="font-bold text-[#060C16] flex items-center gap-1.5">
                       <KeyRound className="w-3.5 h-3.5 text-[#1E5AFF]" />
-                      Doctor Portal Login Credentials
-                    </span>
-                    <span className="text-[10px] font-semibold text-[#1E5AFF]">
-                      Auto-emailed on save
+                      Doctor Login Credentials
                     </span>
                   </div>
 
@@ -3871,7 +4322,7 @@ export default function AdminDashboardPage({
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1">
                       <label className="block font-bold text-[#060C16]">
-                        Doctor Email Address (for Credentials &amp; 2FA) *
+                        Doctor Email Address (for Login Credentials) *
                       </label>
                       <input
                         type="email"
@@ -4017,11 +4468,8 @@ export default function AdminDashboardPage({
             >
               <div className="flex items-center justify-between">
                 <div>
-                  <span className="text-[11px] font-bold text-[#1E5AFF] uppercase tracking-wider block">
-                    2FA Protected Staff Access
-                  </span>
                   <h3 className="text-lg sm:text-xl font-bold text-[#060C16]">
-                    {editingAdminAccount ? 'Edit Admin / Staff Account' : 'Add New Admin / Staff'}
+                    {editingAdminAccount ? 'Edit Admin / Staff Account & Role' : 'Add New Admin / Staff'}
                   </h3>
                 </div>
                 <button
@@ -4088,7 +4536,7 @@ export default function AdminDashboardPage({
 
                 <div className="space-y-1">
                   <label className="block font-bold text-[#060C16]">
-                    Official Email / Gmail (Receives 2FA Login OTP &amp; Password Reset) *
+                    Official Login Email *
                   </label>
                   <input
                     type="email"
@@ -4154,7 +4602,7 @@ export default function AdminDashboardPage({
                 </div>
 
                 <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] text-[11px] text-[#64748B]">
-                  When this staff member logs in with their username/email and password, a 6-digit OTP verification code will automatically be sent to their Gmail before granting access.
+                  This staff member can log in directly to the portal using their username or email and password. Their portal access and permissions will automatically adjust based on their assigned role ({adminForm.role}).
                 </div>
 
                 <div className="pt-2 flex flex-col-reverse sm:flex-row justify-end gap-2">

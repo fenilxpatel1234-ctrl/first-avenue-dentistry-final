@@ -30,9 +30,13 @@ import {
   ComputedTimeSlot,
   TemporarySlotReservation,
   DateSpecificAvailability,
+  BookingServiceItem,
+  ServiceScheduleConfig,
+  DEFAULT_BOOKING_SERVICES,
   DAY_NAMES,
   generateTimeSlotsFromWindow,
   format24hTo12h,
+  normalizeServiceKey,
 } from '../types/scheduling';
 
 // ======================== REAL-TIME SERVER-SENT EVENTS SUBSCRIPTION ========================
@@ -224,30 +228,23 @@ export function subscribeToAppointments(
       });
       if (res.ok) {
         const backendList: any[] = await res.json();
-        const byId = new Map<string, Appointment>();
+        const backendIds = new Set(backendList.map((b) => String(b?.id || '')));
+        // Remove any stale Firestore appointment documents that were deleted on the server
         for (const item of latestFirestore) {
-          const norm = normalizeAppointmentRecord(item, item.id);
-          byId.set(norm.id, norm);
-        }
-        for (const bItem of backendList) {
-          const normB = normalizeAppointmentRecord(bItem, bItem?.id);
-          const existing = byId.get(normB.id);
-          if (
-            !existing ||
-            new Date(normB.updatedAt || normB.createdAt || 0) >=
-              new Date(existing.updatedAt || existing.createdAt || 0)
-          ) {
-            byId.set(normB.id, normB);
+          if (item.id && !backendIds.has(item.id)) {
+            deleteDoc(doc(db, collectionPath, item.id)).catch(() => {});
           }
         }
-        const combined = Array.from(byId.values()).sort(
-          (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
-        );
+        const combined = backendList
+          .map((bItem) => normalizeAppointmentRecord(bItem, bItem?.id))
+          .sort(
+            (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+          );
         onUpdate(combined);
         return;
       }
     } catch {}
-    onUpdate(latestFirestore.map((item) => normalizeAppointmentRecord(item, item.id)));
+    onUpdate([]);
   };
 
   const unsubFs = onSnapshot(
@@ -414,6 +411,58 @@ export async function deleteAppointment(id: string, appointmentDetails?: string)
 
 // ======================== 2. DOCTOR AVAILABILITY & 5-MINUTE RESERVATIONS ========================
 
+function normalizeSpecificMapHelper(
+  rawSpecific: any,
+  defaultDuration: SlotDurationMinutes
+): Record<string, DateSpecificAvailability> {
+  const specificMap: Record<string, DateSpecificAvailability> = {};
+  if (Array.isArray(rawSpecific)) {
+    for (const d of rawSpecific) {
+      if (d && d.date) {
+        const isEnabled =
+          d.enabled !== undefined ? Boolean(d.enabled) : d.isAvailable !== false;
+        specificMap[d.date] = {
+          id: d.id || `spec-${d.date}`,
+          date: d.date,
+          isAvailable: isEnabled,
+          enabled: isEnabled,
+          startTime: format24hTo12h(d.startTime || '09:00 AM'),
+          endTime: format24hTo12h(d.endTime || '05:00 PM'),
+          slotDuration: ([15, 30, 45, 60].includes(Number(d.slotDuration))
+            ? Number(d.slotDuration)
+            : defaultDuration) as SlotDurationMinutes,
+          slots: Array.isArray(d.slots) ? d.slots : [],
+          note: d.note,
+          updatedAt: d.updatedAt,
+        };
+      }
+    }
+  } else if (rawSpecific && typeof rawSpecific === 'object') {
+    for (const [k, d] of Object.entries(rawSpecific as Record<string, any>)) {
+      if (d) {
+        const dt = d.date || k;
+        const isEnabled =
+          d.enabled !== undefined ? Boolean(d.enabled) : d.isAvailable !== false;
+        specificMap[dt] = {
+          id: d.id || `spec-${dt}`,
+          date: dt,
+          isAvailable: isEnabled,
+          enabled: isEnabled,
+          startTime: format24hTo12h(d.startTime || '09:00 AM'),
+          endTime: format24hTo12h(d.endTime || '05:00 PM'),
+          slotDuration: ([15, 30, 45, 60].includes(Number(d.slotDuration))
+            ? Number(d.slotDuration)
+            : defaultDuration) as SlotDurationMinutes,
+          slots: Array.isArray(d.slots) ? d.slots : [],
+          note: d.note,
+          updatedAt: d.updatedAt,
+        };
+      }
+    }
+  }
+  return specificMap;
+}
+
 export function normalizeAvailabilityRecord(raw: any): DoctorAvailabilityRecord {
   const defaultDuration: SlotDurationMinutes = [15, 30, 45, 60].includes(Number(raw?.defaultDuration))
     ? (Number(raw.defaultDuration) as SlotDurationMinutes)
@@ -437,49 +486,42 @@ export function normalizeAvailabilityRecord(raw: any): DoctorAvailabilityRecord 
     slots: Array.isArray(w.slots) ? w.slots : [],
   }));
 
-  const specificMap: Record<string, DateSpecificAvailability> = {};
-  if (Array.isArray(raw?.specificDates)) {
-    for (const d of raw.specificDates) {
-      if (d && d.date) {
-        const isEnabled =
-          d.enabled !== undefined ? Boolean(d.enabled) : d.isAvailable !== false;
-        specificMap[d.date] = {
-          id: d.id || `spec-${d.date}`,
-          date: d.date,
-          isAvailable: isEnabled,
-          enabled: isEnabled,
-          startTime: format24hTo12h(d.startTime || '09:00 AM'),
-          endTime: format24hTo12h(d.endTime || '05:00 PM'),
-          slotDuration: ([15, 30, 45, 60].includes(Number(d.slotDuration))
-            ? Number(d.slotDuration)
-            : defaultDuration) as SlotDurationMinutes,
-          slots: Array.isArray(d.slots) ? d.slots : [],
-          note: d.note,
-          updatedAt: d.updatedAt,
-        };
-      }
-    }
-  } else if (raw?.specificDates && typeof raw.specificDates === 'object') {
-    for (const [k, d] of Object.entries(raw.specificDates as Record<string, any>)) {
-      if (d) {
-        const dt = d.date || k;
-        const isEnabled =
-          d.enabled !== undefined ? Boolean(d.enabled) : d.isAvailable !== false;
-        specificMap[dt] = {
-          id: d.id || `spec-${dt}`,
-          date: dt,
-          isAvailable: isEnabled,
-          enabled: isEnabled,
-          startTime: format24hTo12h(d.startTime || '09:00 AM'),
-          endTime: format24hTo12h(d.endTime || '05:00 PM'),
-          slotDuration: ([15, 30, 45, 60].includes(Number(d.slotDuration))
-            ? Number(d.slotDuration)
-            : defaultDuration) as SlotDurationMinutes,
-          slots: Array.isArray(d.slots) ? d.slots : [],
-          note: d.note,
-          updatedAt: d.updatedAt,
-        };
-      }
+  const specificMap = normalizeSpecificMapHelper(raw?.specificDates, defaultDuration);
+
+  const serviceAvailabilities: Record<string, ServiceScheduleConfig> = {};
+  if (raw?.serviceAvailabilities && typeof raw.serviceAvailabilities === 'object') {
+    for (const [rawKey, cfg] of Object.entries(raw.serviceAvailabilities as Record<string, any>)) {
+      if (!cfg) continue;
+      const sKey = normalizeServiceKey(rawKey);
+      if (!sKey || sKey === 'all') continue;
+      const sDur: SlotDurationMinutes = [15, 30, 45, 60].includes(Number(cfg.defaultDuration))
+        ? (Number(cfg.defaultDuration) as SlotDurationMinutes)
+        : defaultDuration;
+      const sRawWeekly = Array.isArray(cfg.weeklySchedule)
+        ? cfg.weeklySchedule
+        : Array.isArray(cfg.recurringWeekly)
+        ? cfg.recurringWeekly
+        : [];
+      const sNormWeekly = sRawWeekly.map((w: any, idx: number) => ({
+        dayOfWeek: typeof w.dayOfWeek === 'number' ? w.dayOfWeek : idx,
+        dayName: w.dayName || DAY_NAMES[typeof w.dayOfWeek === 'number' ? w.dayOfWeek : idx] || 'Monday',
+        enabled: Boolean(w.enabled),
+        startTime: format24hTo12h(w.startTime || '09:00 AM'),
+        endTime: format24hTo12h(w.endTime || '05:00 PM'),
+        slotDuration: ([15, 30, 45, 60].includes(Number(w.slotDuration))
+          ? Number(w.slotDuration)
+          : sDur) as SlotDurationMinutes,
+        slots: Array.isArray(w.slots) ? w.slots : [],
+      }));
+      serviceAvailabilities[sKey] = {
+        serviceId: sKey,
+        serviceTitle: cfg.serviceTitle || rawKey,
+        defaultDuration: sDur,
+        recurringWeekly: sNormWeekly,
+        weeklySchedule: sNormWeekly,
+        specificDates: normalizeSpecificMapHelper(cfg.specificDates, sDur),
+        updatedAt: cfg.updatedAt || new Date().toISOString(),
+      };
     }
   }
 
@@ -490,6 +532,7 @@ export function normalizeAvailabilityRecord(raw: any): DoctorAvailabilityRecord 
     recurringWeekly: normalizedWeekly,
     weeklySchedule: normalizedWeekly,
     specificDates: specificMap,
+    serviceAvailabilities,
     updatedAt: raw?.updatedAt || new Date().toISOString(),
   };
 }
@@ -504,6 +547,8 @@ export async function saveDoctorAvailability(
   let defaultDuration: SlotDurationMinutes;
   let weeklyList: any[];
   let specificList: any[];
+  let serviceAvailabilities: Record<string, any> | undefined;
+  let serviceId: string | undefined;
   let actorEmail: string | undefined;
 
   if (typeof recordOrDoctorId === 'string') {
@@ -514,6 +559,8 @@ export async function saveDoctorAvailability(
       payloadOrActorEmail?.recurringWeekly || payloadOrActorEmail?.weeklySchedule || [];
     const rawSpec = payloadOrActorEmail?.specificDates || [];
     specificList = Array.isArray(rawSpec) ? rawSpec : Object.values(rawSpec);
+    serviceAvailabilities = payloadOrActorEmail?.serviceAvailabilities;
+    serviceId = payloadOrActorEmail?.serviceId;
     actorEmail = maybeActorEmail;
   } else {
     doctorId = recordOrDoctorId.doctorId;
@@ -523,6 +570,7 @@ export async function saveDoctorAvailability(
       recordOrDoctorId.weeklySchedule || recordOrDoctorId.recurringWeekly || [];
     const rawSpec = recordOrDoctorId.specificDates || {};
     specificList = Array.isArray(rawSpec) ? rawSpec : Object.values(rawSpec);
+    serviceAvailabilities = recordOrDoctorId.serviceAvailabilities;
     actorEmail = typeof payloadOrActorEmail === 'string' ? payloadOrActorEmail : undefined;
   }
 
@@ -541,6 +589,8 @@ export async function saveDoctorAvailability(
         ...d,
         isAvailable: d.enabled !== undefined ? Boolean(d.enabled) : d.isAvailable !== false,
       })),
+      ...(serviceAvailabilities ? { serviceAvailabilities } : {}),
+      ...(serviceId ? { serviceId } : {}),
     }),
   });
 
@@ -609,6 +659,7 @@ export function subscribeToDoctorAvailabilities(
     if (
       ev.type === 'availability_updated' ||
       ev.type === 'doctors_updated' ||
+      ev.type === 'booking_services_updated' ||
       ev.type === 'reservation_locked' ||
       ev.type === 'reservation_released' ||
       ev.type === 'reservations_expired' ||
@@ -630,7 +681,8 @@ export function subscribeToDoctorAvailabilities(
 export async function fetchDoctorDateSlotStatuses(
   doctorIdOrName: string,
   date: string,
-  sessionId?: string
+  sessionId?: string,
+  service?: string
 ): Promise<{
   doctorId: string;
   doctorName: string;
@@ -642,6 +694,7 @@ export async function fetchDoctorDateSlotStatuses(
     doctorId: doctorIdOrName,
     date,
     ...(sessionId ? { sessionId } : {}),
+    ...(service ? { service } : {}),
   });
   const res = await fetch(`/api/availability?${qs.toString()}`);
   const data = await res.json().catch(() => ({}));
@@ -685,6 +738,7 @@ export async function lockTemporarySlotReservation(params: {
   doctorName?: string;
   date: string;
   time: string;
+  service?: string;
   sessionId: string;
   patientName?: string;
   patientEmail?: string;
@@ -706,6 +760,7 @@ export async function lockTemporarySlotReservation(params: {
     doctorName: r.doctorName || params.doctorName || 'Doctor',
     date: r.date || params.date,
     time: r.time || params.time,
+    service: r.service || params.service,
     sessionId: r.sessionId || params.sessionId,
     patientName: r.patientName || params.patientName,
     patientEmail: r.patientEmail || params.patientEmail,
@@ -733,41 +788,161 @@ export async function releaseTemporarySlotReservation(
   } catch {}
 }
 
-// ======================== 3. CONTACT ENQUIRIES ========================
+// ======================== 2B. BOOKING SERVICES MANAGEMENT ========================
+export function subscribeToBookingServices(
+  onUpdate: (services: BookingServiceItem[]) => void
+): () => void {
+  const syncFromBackend = async () => {
+    try {
+      const res = await fetch('/api/booking-services');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.services) && data.services.length > 0) {
+          onUpdate(data.services);
+          return;
+        }
+      }
+    } catch {}
+    onUpdate(DEFAULT_BOOKING_SERVICES);
+  };
+
+  const unsubSse = subscribeToRealtimeClinicEvents((ev) => {
+    if (ev.type === 'booking_services_updated') {
+      if (Array.isArray(ev.services)) {
+        onUpdate(ev.services.filter((s: BookingServiceItem) => s.isActive !== false));
+      } else {
+        syncFromBackend();
+      }
+    }
+  });
+
+  syncFromBackend();
+  return () => {
+    unsubSse();
+  };
+}
+
+export async function upsertBookingService(
+  item: Partial<BookingServiceItem> & { title: string }
+): Promise<BookingServiceItem[]> {
+  const res = await fetch('/api/booking-services', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAdminAuthHeaders(),
+    },
+    body: JSON.stringify(item),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to save booking service.');
+  }
+  return data.services || DEFAULT_BOOKING_SERVICES;
+}
+
+export async function deleteBookingService(serviceId: string): Promise<BookingServiceItem[]> {
+  const res = await fetch(`/api/booking-services/${encodeURIComponent(serviceId)}`, {
+    method: 'DELETE',
+    headers: getAdminAuthHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to delete booking service.');
+  }
+  return data.services || DEFAULT_BOOKING_SERVICES;
+}
+
+export async function resetBookingServicesToDefaults(): Promise<BookingServiceItem[]> {
+  const res = await fetch('/api/booking-services/reset', {
+    method: 'POST',
+    headers: getAdminAuthHeaders(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to reset booking services.');
+  }
+  return data.services || DEFAULT_BOOKING_SERVICES;
+}
+
+// ======================== 3. CONTACT ENQUIRIES (ATOMIC + DUAL-SYNCED) ========================
+function normalizeEnquiryRecord(raw: any, fallbackId?: string): Enquiry {
+  const rawStatus = String(raw?.status || 'new').trim().toLowerCase();
+  const status: Enquiry['status'] = (
+    ['new', 'in_progress', 'handled'].includes(rawStatus) ? rawStatus : 'new'
+  ) as Enquiry['status'];
+
+  return {
+    id: String(raw?.id || fallbackId || `enq-${Date.now()}`),
+    name: String(raw?.name || 'Patient').trim(),
+    email: String(raw?.email || '').trim(),
+    phone: String(raw?.phone || '').trim(),
+    service: String(raw?.service || 'General Inquiry').trim(),
+    message: String(raw?.message || '').trim(),
+    status,
+    createdAt: String(raw?.createdAt || new Date().toISOString()),
+    updatedAt: String(raw?.updatedAt || raw?.createdAt || new Date().toISOString()),
+  };
+}
+
 export async function submitEnquiry(
   data: Omit<Enquiry, 'id' | 'status' | 'createdAt' | 'updatedAt'>
 ): Promise<string> {
   const collectionPath = 'enquiries';
-  try {
-    const now = new Date().toISOString();
-    const newEnquiry = {
-      name: data.name || '',
-      email: data.email || '',
+  const now = new Date().toISOString();
+
+  // 1. Save atomically on backend & dispatch email + real-time SSE event to Admin Portal
+  const apiRes = await fetch('/api/enquiries', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: data.name || 'Patient',
+      email: data.email || 'firstavenuedentistry@gmail.com',
       phone: data.phone || '',
       service: data.service || 'General Inquiry',
       message: data.message || '',
-      status: 'new' as const,
+    }),
+  });
+
+  const apiJson = await apiRes.json().catch(() => ({}));
+  if (!apiRes.ok) {
+    throw new Error(apiJson.error || 'Unable to submit your inquiry right now.');
+  }
+
+  const createdEnquiry = normalizeEnquiryRecord(
+    apiJson.enquiry || {
+      ...data,
+      status: 'new',
       createdAt: now,
       updatedAt: now,
-    };
+    }
+  );
 
-    const docRef = await addDoc(collection(db, collectionPath), newEnquiry);
-
+  // 2. Sync non-blockingly to Firestore with the same document ID
+  void (async () => {
     try {
+      await setDoc(doc(db, collectionPath, createdEnquiry.id), {
+        name: createdEnquiry.name,
+        email: createdEnquiry.email,
+        phone: createdEnquiry.phone,
+        service: createdEnquiry.service,
+        message: createdEnquiry.message,
+        status: 'new' as const,
+        createdAt: createdEnquiry.createdAt,
+        updatedAt: createdEnquiry.updatedAt,
+      });
+
       await addDoc(collection(db, 'activity_logs'), {
         adminEmail: 'patient-contact@firstavenuedentistry.ca',
         action: 'New Contact Inquiry',
-        details: `Inquiry from ${data.name} (${data.email}) regarding ${data.service}`,
-        targetId: docRef.id,
+        details: `Inquiry from ${createdEnquiry.name} (${createdEnquiry.email}) regarding ${createdEnquiry.service}`,
+        targetId: createdEnquiry.id,
         targetType: 'enquiry',
         timestamp: now,
       });
     } catch {}
+  })();
 
-    return docRef.id;
-  } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, collectionPath);
-  }
+  return createdEnquiry.id;
 }
 
 export function subscribeToEnquiries(
@@ -777,42 +952,131 @@ export function subscribeToEnquiries(
   const collectionPath = 'enquiries';
   const q = query(collection(db, collectionPath), orderBy('createdAt', 'desc'));
 
-  return onSnapshot(
+  let latestFirestore: Enquiry[] = [];
+
+  const mergeWithBackend = async () => {
+    try {
+      const res = await fetch('/api/enquiries', {
+        headers: getAdminAuthHeaders(),
+      });
+      if (res.ok) {
+        const backendList: any[] = await res.json();
+        const mergedMap = new Map<string, Enquiry>();
+
+        for (const fsItem of latestFirestore) {
+          if (fsItem?.id) {
+            mergedMap.set(fsItem.id, normalizeEnquiryRecord(fsItem, fsItem.id));
+          }
+        }
+        for (const bItem of backendList) {
+          const norm = normalizeEnquiryRecord(bItem, bItem?.id);
+          mergedMap.set(norm.id, norm);
+        }
+
+        const combined = Array.from(mergedMap.values()).sort(
+          (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+        );
+        onUpdate(combined);
+        return;
+      }
+    } catch {}
+    onUpdate(latestFirestore);
+  };
+
+  const unsubFs = onSnapshot(
     q,
     (snapshot) => {
-      const items: Enquiry[] = snapshot.docs.map((docSnap) => ({
-        id: docSnap.id,
-        ...(docSnap.data() as Omit<Enquiry, 'id'>),
-      }));
-      onUpdate(items);
+      latestFirestore = snapshot.docs.map((docSnap) =>
+        normalizeEnquiryRecord(docSnap.data(), docSnap.id)
+      );
+      mergeWithBackend();
     },
     (error) => {
       if (onError) onError(error);
+      mergeWithBackend();
     }
   );
+
+  const unsubSse = subscribeToRealtimeClinicEvents((ev) => {
+    if (ev.type === 'enquiries_updated') {
+      if (Array.isArray(ev.enquiries)) {
+        const mergedMap = new Map<string, Enquiry>();
+        for (const fsItem of latestFirestore) {
+          if (fsItem?.id && fsItem.id !== ev.deletedId) {
+            mergedMap.set(fsItem.id, normalizeEnquiryRecord(fsItem, fsItem.id));
+          }
+        }
+        for (const bItem of ev.enquiries) {
+          const norm = normalizeEnquiryRecord(bItem, bItem?.id);
+          mergedMap.set(norm.id, norm);
+        }
+        const combined = Array.from(mergedMap.values()).sort(
+          (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+        );
+        onUpdate(combined);
+      } else {
+        mergeWithBackend();
+      }
+    }
+  });
+
+  // Initial backend fetch
+  mergeWithBackend();
+
+  return () => {
+    unsubFs();
+    unsubSse();
+  };
 }
 
 export async function updateEnquiryStatus(id: string, status: Enquiry['status']) {
-  const docPath = `enquiries/${id}`;
-  try {
-    const ref = doc(db, 'enquiries', id);
-    const now = new Date().toISOString();
-    await updateDoc(ref, {
-      status,
-      updatedAt: now,
-    });
+  const now = new Date().toISOString();
 
-    await addDoc(collection(db, 'activity_logs'), {
-      adminEmail: auth.currentUser?.email || 'firstavenuedentistry@gmail.com',
-      action: 'Inquiry Status Updated',
-      details: `Marked inquiry #${id.slice(0, 6)} as ${status}`,
-      targetId: id,
-      targetType: 'enquiry',
-      timestamp: now,
-    });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, docPath);
+  const res = await fetch(`/api/enquiries/${encodeURIComponent(id)}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAdminAuthHeaders(),
+    },
+    body: JSON.stringify({ status }),
+  });
+
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to update inquiry status.');
   }
+
+  void (async () => {
+    try {
+      const ref = doc(db, 'enquiries', id);
+      await updateDoc(ref, {
+        status,
+        updatedAt: now,
+      });
+
+      await addDoc(collection(db, 'activity_logs'), {
+        adminEmail: auth.currentUser?.email || 'firstavenuedentistry@gmail.com',
+        action: 'Inquiry Status Updated',
+        details: `Marked inquiry #${id.slice(0, 6)} as ${status}`,
+        targetId: id,
+        targetType: 'enquiry',
+        timestamp: now,
+      });
+    } catch {}
+  })();
+}
+
+export async function deleteEnquiry(id: string) {
+  await fetch(`/api/enquiries/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: getAdminAuthHeaders(),
+  });
+
+  void (async () => {
+    try {
+      await deleteDoc(doc(db, 'enquiries', id));
+    } catch {}
+  })();
 }
 
 // ======================== 4. DOCTORS MANAGEMENT ========================
@@ -1008,7 +1272,10 @@ export async function upsertDoctor(
       ...dataToSave,
       emailDispatched,
     };
-  } catch (error) {
+  } catch (error: any) {
+    if (error instanceof Error) {
+      throw error;
+    }
     handleFirestoreError(error, id ? OperationType.UPDATE : OperationType.CREATE, collectionPath);
   }
 }
@@ -1238,6 +1505,39 @@ export async function seedInitialClinicalDataIfEmpty() {
       const res = await fetch('/api/doctors');
       if (res.ok) {
         const data = await res.json();
+        const validDocIds = new Set<string>(
+          Array.isArray(data.doctors) ? data.doctors.map((d: any) => String(d.id)) : []
+        );
+
+        // One-time clean database purge for old Firestore records
+        if (
+          data.cleanResetVersion === 'v3-clean' &&
+          typeof window !== 'undefined' &&
+          localStorage.getItem('vantage_clean_db_v3') !== 'done'
+        ) {
+          localStorage.setItem('vantage_clean_db_v3', 'done');
+          localStorage.removeItem('vantage_device_passkeys_v1');
+
+          const collectionsToClean = [
+            'doctors',
+            'doctor_availability',
+            'appointments',
+            'enquiries',
+            'activity_logs',
+            'reviews',
+          ];
+          for (const colName of collectionsToClean) {
+            try {
+              const snap = await getDocs(collection(db, colName));
+              for (const dSnap of snap.docs) {
+                if (colName === 'doctors' && validDocIds.has(dSnap.id)) continue;
+                if (colName === 'doctor_availability' && validDocIds.has(dSnap.id)) continue;
+                deleteDoc(dSnap.ref).catch(() => {});
+              }
+            } catch {}
+          }
+        }
+
         if (Array.isArray(data.doctors)) {
           for (const d of data.doctors) {
             if (!isLegacyDummyDoctorRecord(d.id, d.name)) {

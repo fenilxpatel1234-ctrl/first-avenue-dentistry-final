@@ -1,6 +1,6 @@
 /**
  * Client authentication header generator for First Avenue Dentistry API
- * Securely retrieves session token from active 2FA admin/doctor session.
+ * Securely retrieves session token and identity headers from active admin/doctor session.
  */
 
 export function getAdminAuthHeaders(): Record<string, string> {
@@ -9,13 +9,18 @@ export function getAdminAuthHeaders(): Record<string, string> {
     const raw = localStorage.getItem('vantage_admin_session');
     if (!raw) return {};
     const parsed = JSON.parse(raw);
-    const token = parsed?.sessionToken;
-    if (token && typeof token === 'string') {
-      return {
-        Authorization: `Bearer ${token}`,
-        'X-Session-Token': token,
-      };
+    const headers: Record<string, string> = {};
+    if (parsed?.sessionToken && typeof parsed.sessionToken === 'string') {
+      headers.Authorization = `Bearer ${parsed.sessionToken}`;
+      headers['X-Session-Token'] = parsed.sessionToken;
     }
+    if (parsed?.id && typeof parsed.id === 'string') {
+      headers['X-Admin-Id'] = parsed.id;
+    }
+    if (parsed?.email && typeof parsed.email === 'string') {
+      headers['X-Admin-Email'] = parsed.email;
+    }
+    return headers;
   } catch {}
   return {};
 }

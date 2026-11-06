@@ -32,8 +32,72 @@ import { subscribeToRealtimeClinicEvents } from "./lib/firestoreService";
 import { useDeviceLayoutEngine } from "./lib/deviceLayoutEngine";
 import { Terminal } from "lucide-react";
 
+function isDeveloperUrl(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const pathname = (window.location.pathname || "").toLowerCase().replace(/\/+$/, "") || "/";
+    const hash = (window.location.hash || "").toLowerCase().replace(/^#\/?/, "").replace(/\/+$/, "");
+    const searchParams = new URLSearchParams(window.location.search || "");
+
+    return (
+      pathname === "/developer" ||
+      pathname === "/dev" ||
+      pathname.startsWith("/developer/") ||
+      pathname.startsWith("/dev/") ||
+      hash === "developer" ||
+      hash === "/developer" ||
+      hash === "dev" ||
+      hash === "/dev" ||
+      hash.startsWith("developer/") ||
+      hash.startsWith("/developer/") ||
+      hash.startsWith("dev/") ||
+      hash.startsWith("/dev/") ||
+      searchParams.get("portal") === "developer" ||
+      searchParams.get("page") === "developer" ||
+      searchParams.has("developer")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function resolveInitialPage(): string {
+  if (isDeveloperUrl()) {
+    return "developer";
+  }
+  if (typeof window === "undefined") return "home";
+  try {
+    const pathname = window.location.pathname.toLowerCase().replace(/\/+$/, "") || "/";
+    const hash = window.location.hash.toLowerCase().replace(/^#\/?/, "");
+
+    if (pathname === "/doctor/login" || hash === "doctor/login" || hash === "/doctor/login") {
+      return "doctor-login";
+    }
+    if (pathname === "/doctor" || hash === "doctor" || hash === "/doctor") {
+      return "doctor";
+    }
+    if (pathname === "/admin/login" || hash === "admin/login" || hash === "/admin/login") {
+      return "admin-login";
+    }
+    if (pathname === "/admin" || hash === "admin" || hash === "/admin") {
+      return "admin";
+    }
+
+    if (!hash || hash === "hero" || hash === "home") {
+      return "home";
+    }
+    if (hash.startsWith("service/") || hash.startsWith("services/")) {
+      return "service-detail";
+    }
+    if (["about", "services", "why-us", "doctors", "faq", "contact", "emergency"].includes(hash)) {
+      return hash;
+    }
+  } catch {}
+  return "home";
+}
+
 export default function App() {
-  const [currentPage, setCurrentPage] = useState<string>("home");
+  const [currentPage, setCurrentPage] = useState<string>(() => resolveInitialPage());
   const [activeServiceId, setActiveServiceId] = useState<string>("teeth-whitening");
   const [isBookingOpen, setIsBookingOpen] = useState(false);
   const [isConciergeOpen, setIsConciergeOpen] = useState(false);
@@ -99,15 +163,8 @@ export default function App() {
       const pathname = window.location.pathname.replace(/\/+$/, "") || "/";
       const hash = window.location.hash.replace(/^#\/?/, "");
 
-      // Check pathname or hash for hidden Developer Portal route
-      if (
-        pathname === "/developer" ||
-        pathname === "/dev" ||
-        hash === "developer" ||
-        hash === "/developer" ||
-        hash === "dev" ||
-        hash === "/dev"
-      ) {
+      // Check pathname, hash, or query for hidden Developer Portal route
+      if (isDeveloperUrl()) {
         setCurrentPage("developer");
         forceScrollToTop();
         return;
@@ -300,7 +357,9 @@ export default function App() {
   };
 
   // 1. Dedicated Developer Systems & Site Operations Portal (Completely Separate Portal #3)
-  if (currentPage === "developer") {
+  // 1. Dedicated Developer Systems & Site Operations Portal (Completely Separate Portal #3)
+  // When entering the Developer Portal URL (/developer, /dev, #/developer, etc.), directly open the portal immediately
+  if (currentPage === "developer" || isDeveloperUrl()) {
     return (
       <DeveloperPortalPage
         siteControl={siteControl}
@@ -356,7 +415,6 @@ export default function App() {
     return (
       <MaintenanceView
         config={siteControl}
-        onOpenDeveloperPortal={() => handleNavigate("developer")}
       />
     );
   }
@@ -369,7 +427,6 @@ export default function App() {
           setSiteControl((prev) => ({ ...prev, mode: "live" }));
           fetchSiteControl();
         }}
-        onOpenDeveloperPortal={() => handleNavigate("developer")}
       />
     );
   }

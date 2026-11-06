@@ -10,10 +10,15 @@ import {
   TemporarySlotReservation,
   SlotDurationMinutes,
   ComputedTimeSlot,
+  BookingServiceItem,
+  ServiceScheduleConfig,
+  DEFAULT_BOOKING_SERVICES,
   DAY_NAMES,
   generateTimeSlotsFromWindow,
   getConfiguredDoctorSlotsForDate,
   sortTimeSlotsChronologically,
+  normalizeServiceKey,
+  buildDefaultServiceScheduleForDoctor,
 } from './src/types/scheduling';
 
 dotenv.config();
@@ -84,6 +89,9 @@ const AVAILABILITY_FILE = path.join(DATA_DIR, 'doctor_availability.json');
 const RESERVATIONS_FILE = path.join(DATA_DIR, 'reservations.json');
 const EMAIL_LOG_FILE = path.join(DATA_DIR, 'email_log.json');
 const ADMINS_FILE = path.join(DATA_DIR, 'admins.json');
+const PASSKEYS_FILE = path.join(DATA_DIR, 'passkeys.json');
+const BOOKING_SERVICES_FILE = path.join(DATA_DIR, 'booking_services.json');
+const ENQUIRIES_FILE = path.join(DATA_DIR, 'enquiries.json');
 const MANUAL_AVAILABILITY_RESET_FILE = path.join(DATA_DIR, 'manual_availability_reset_v2.json');
 
 if (!fs.existsSync(DATA_DIR)) {
@@ -354,11 +362,47 @@ function initializeDoctorsAndAvailability() {
   return { doctors: mergedDocs, availabilities: mergedAvail, wasReset: !resetDone };
 }
 
+function initializeBookingServices(): BookingServiceItem[] {
+  const existing = loadJSON<BookingServiceItem>(BOOKING_SERVICES_FILE, []);
+  if (Array.isArray(existing) && existing.length > 0) {
+    return existing.map((s) => ({
+      id: String(s.id || normalizeServiceKey(s.title)),
+      title: String(s.title || 'Dental Consultation').trim(),
+      category: String(s.category || 'Clinical Care').trim(),
+      durationMinutes: ([15, 30, 45, 60].includes(Number(s.durationMinutes))
+        ? Number(s.durationMinutes)
+        : 30) as SlotDurationMinutes,
+      description: String(s.description || '').trim(),
+      allowedDoctorIds: Array.isArray(s.allowedDoctorIds) ? s.allowedDoctorIds : [],
+      isActive: s.isActive !== false,
+      updatedAt: s.updatedAt || new Date().toISOString(),
+    }));
+  }
+  saveJSON(BOOKING_SERVICES_FILE, DEFAULT_BOOKING_SERVICES);
+  return [...DEFAULT_BOOKING_SERVICES];
+}
+
 const initialClinicalState = initializeDoctorsAndAvailability();
 let doctorsDatabase: DoctorRecord[] = initialClinicalState.doctors;
 let availabilityDatabase: DoctorAvailabilityRecord[] = initialClinicalState.availabilities;
+let bookingServicesDatabase: BookingServiceItem[] = initializeBookingServices();
 let appointmentDatabase: any[] = loadJSON<any>(APPOINTMENTS_FILE, []);
+let enquiriesDatabase: any[] = loadJSON<any>(ENQUIRIES_FILE, []);
 let reservationsDatabase: TemporarySlotReservation[] = loadJSON<TemporarySlotReservation>(RESERVATIONS_FILE, []);
+
+function persistEnquiriesDatabase() {
+  saveJSON(ENQUIRIES_FILE, enquiriesDatabase);
+  if (isFirebaseReady()) {
+    fbSet('enquiries', enquiriesDatabase).catch(() => {});
+  }
+}
+
+function persistBookingServicesDatabase() {
+  saveJSON(BOOKING_SERVICES_FILE, bookingServicesDatabase);
+  if (isFirebaseReady()) {
+    fbSet('booking_services', bookingServicesDatabase).catch(() => {});
+  }
+}
 
 function persistDoctorsDatabase() {
   saveJSON(DOCTORS_FILE, doctorsDatabase);
@@ -436,8 +480,13 @@ function buildInitialAdmins(): AdminAccountRecord[] {
         ...item,
         createdAt: new Date().toISOString(),
       });
-    } else if (item.doctorId && !combined[foundIdx].doctorId) {
-      combined[foundIdx].doctorId = item.doctorId;
+    } else {
+      if (item.role === 'Super Admin' && combined[foundIdx].role === 'Doctor') {
+        combined[foundIdx].role = 'Super Admin';
+      }
+      if (item.doctorId && !combined[foundIdx].doctorId && combined[foundIdx].role === 'Doctor') {
+        combined[foundIdx].doctorId = item.doctorId;
+      }
     }
   };
 
@@ -470,6 +519,15 @@ function buildInitialAdmins(): AdminAccountRecord[] {
     role: 'Super Admin',
   });
 
+  ensureAdmin({
+    id: 'dev-master-console',
+    name: 'Fenil Patel',
+    email: 'fenilxpatel2642@gmail.com',
+    username: 'developer',
+    password: '1234567890',
+    role: 'Super Admin',
+  });
+
   // Ensure each real registered doctor has a login account for the Doctor Portal
   for (const doc of doctorsDatabase) {
     const uname = doc.username || doc.name.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -482,6 +540,14 @@ function buildInitialAdmins(): AdminAccountRecord[] {
       role: 'Doctor',
       doctorId: doc.id,
     });
+  }
+
+  // Always guarantee primary accounts 'fenil' and 'admin' have Super Admin role
+  for (const acc of combined) {
+    const u = acc.username.toLowerCase();
+    if ((u === 'fenil' || u === 'admin') && acc.role === 'Doctor') {
+      acc.role = 'Super Admin';
+    }
   }
 
   saveJSON(ADMINS_FILE, combined);
@@ -499,6 +565,33 @@ function persistAdminsDatabase() {
   }
 }
 
+export interface PasskeyCredentialRecord {
+  id: string;
+  adminId: string;
+  username: string;
+  email: string;
+  name: string;
+  role: string;
+  doctorId?: string;
+  publicKey: string;
+  algorithm: number;
+  deviceLabel: string;
+  transports?: string[];
+  createdAt: string;
+  lastUsedAt?: string;
+}
+
+let passkeysDatabase: PasskeyCredentialRecord[] = loadJSON<PasskeyCredentialRecord>(PASSKEYS_FILE, []);
+
+function persistPasskeysDatabase() {
+  saveJSON(PASSKEYS_FILE, passkeysDatabase);
+  if (isFirebaseReady()) {
+    fbSet('passkeys', passkeysDatabase).catch((err: any) => {
+      console.warn('[Firebase RTDB] Passkeys sync warning:', err.message);
+    });
+  }
+}
+
 function maskEmailAddress(email: string): string {
   const clean = String(email || '').trim();
   const [local, domain] = clean.split('@');
@@ -507,83 +600,18 @@ function maskEmailAddress(email: string): string {
   return `${local.slice(0, 2)}***${local.slice(-1)}@${domain}`;
 }
 
-// Realtime Database Cloud Hydration
+// Realtime Database Cloud Sync (Local clean database is authoritative)
 async function bootstrapCloudStorage() {
   const connected = initFirebase();
   if (connected) {
     try {
-      const cloudAppointments = await fbGet<any[]>('appointments');
-      if (Array.isArray(cloudAppointments) && cloudAppointments.length > 0) {
-        appointmentDatabase = cloudAppointments;
-        saveJSON(APPOINTMENTS_FILE, appointmentDatabase);
-      } else if (appointmentDatabase.length > 0) {
-        await fbSet('appointments', appointmentDatabase);
-      }
-
-      const cloudDoctors = await fbGet<DoctorRecord[]>('doctors');
-      if (Array.isArray(cloudDoctors) && cloudDoctors.length > 0) {
-        for (const cDoc of cloudDoctors) {
-          if (
-            cDoc &&
-            cDoc.id &&
-            !isLegacyDummyDoctor(cDoc.id, cDoc.name) &&
-            !doctorsDatabase.some(
-              (d) => d.id === cDoc.id || d.name.toLowerCase() === String(cDoc.name || '').toLowerCase()
-            )
-          ) {
-            doctorsDatabase.push(normalizeDoctorRecord(cDoc));
-          }
-        }
-        saveJSON(DOCTORS_FILE, doctorsDatabase);
-        await fbSet('doctors', doctorsDatabase);
-      } else {
-        await fbSet('doctors', doctorsDatabase);
-      }
-
-      if (initialClinicalState.wasReset) {
-        await fbSet('doctor_availability', availabilityDatabase);
-      } else {
-        const cloudAvail = await fbGet<DoctorAvailabilityRecord[]>('doctor_availability');
-        if (Array.isArray(cloudAvail) && cloudAvail.length > 0) {
-          for (const item of cloudAvail) {
-            if (isLegacyDummyAvailability(item) || isLegacyDummyDoctor(item.doctorId, item.doctorName)) {
-              continue;
-            }
-            if (!doctorsDatabase.some((d) => d.id === item.doctorId)) continue;
-            const idx = availabilityDatabase.findIndex((a) => a.doctorId === item.doctorId);
-            if (idx >= 0) {
-              availabilityDatabase[idx] = item;
-            } else {
-              availabilityDatabase.push(item);
-            }
-          }
-          saveJSON(AVAILABILITY_FILE, availabilityDatabase);
-        }
-        await fbSet('doctor_availability', availabilityDatabase);
-      }
-
-      const cloudAdmins = await fbGet<AdminAccountRecord[]>('admins');
-      if (Array.isArray(cloudAdmins) && cloudAdmins.length > 0) {
-        const merged = cloudAdmins.filter(
-          (c) => !isLegacyDummyDoctor(c.id, c.name) && !isLegacyDummyDoctor(c.doctorId, c.name)
-        );
-        for (const loc of adminsDatabase) {
-          if (
-            !merged.some(
-              (c) =>
-                c.username.toLowerCase() === loc.username.toLowerCase() ||
-                (loc.doctorId && c.doctorId === loc.doctorId)
-            )
-          ) {
-            merged.push(loc);
-          }
-        }
-        adminsDatabase = merged;
-        saveJSON(ADMINS_FILE, adminsDatabase);
-        await fbSet('admins', adminsDatabase);
-      } else if (adminsDatabase.length > 0) {
-        await fbSet('admins', adminsDatabase);
-      }
+      await fbSet('appointments', appointmentDatabase);
+      await fbSet('enquiries', enquiriesDatabase);
+      await fbSet('doctors', doctorsDatabase);
+      await fbSet('doctor_availability', availabilityDatabase);
+      await fbSet('slot_reservations', reservationsDatabase);
+      await fbSet('admins', adminsDatabase);
+      await fbSet('passkeys', passkeysDatabase);
     } catch (err: any) {
       console.warn('[Firebase RTDB] Cloud bootstrap warning:', err.message);
     }
@@ -1369,20 +1397,61 @@ setInterval(() => {
  * - EXPIRED -> Available
  * - Active 5-Min Temporary Reservation -> Unavailable to other sessions, HELD_BY_YOU for same sessionId
  */
-function computeDoctorSlotsForDate(doctorIdOrName: string, dateStr: string, sessionId?: string) {
+function resolveBookingServiceRecord(serviceIdOrTitle?: string): BookingServiceItem | undefined {
+  const raw = String(serviceIdOrTitle || '').trim();
+  if (!raw || raw.toLowerCase() === 'all') return undefined;
+  const key = normalizeServiceKey(raw);
+  return bookingServicesDatabase.find(
+    (s) =>
+      s.id.toLowerCase() === raw.toLowerCase() ||
+      s.id.toLowerCase() === key.toLowerCase() ||
+      s.title.toLowerCase() === raw.toLowerCase()
+  );
+}
+
+function isDoctorAllowedForService(docId: string, serviceRecord?: BookingServiceItem): boolean {
+  if (!serviceRecord) return true;
+  if (!Array.isArray(serviceRecord.allowedDoctorIds) || serviceRecord.allowedDoctorIds.length === 0) {
+    return true;
+  }
+  if (serviceRecord.allowedDoctorIds.includes('all')) return true;
+  return serviceRecord.allowedDoctorIds.includes(docId);
+}
+
+/**
+ * Computes exact slot availability for a specific Doctor, Date ("YYYY-MM-DD"), and optional Service.
+ * Rules:
+ * - PENDING -> Reserved (Unavailable)
+ * - APPROVED -> Booked (Unavailable)
+ * - RESCHEDULED -> Old slot Available, New slot Reserved/Booked (Unavailable)
+ * - DECLINED -> Available
+ * - EXPIRED -> Available
+ * - Active 5-Min Temporary Reservation -> Unavailable to other sessions, HELD_BY_YOU for same sessionId
+ * - Service-aware: Resolves the doctor's schedule for the selected service (and respects allowedDoctorIds).
+ */
+function computeDoctorSlotsForDate(
+  doctorIdOrName: string,
+  dateStr: string,
+  sessionId?: string,
+  serviceIdOrTitle?: string
+) {
   purgeExpiredReservations();
+  const serviceRecord = resolveBookingServiceRecord(serviceIdOrTitle);
 
   if (String(doctorIdOrName || '').toLowerCase() === 'any') {
-    const activeDocs = doctorsDatabase.filter((d) => d.status === 'active');
+    const activeDocs = doctorsDatabase.filter(
+      (d) => d.status === 'active' && isDoctorAllowedForService(d.id, serviceRecord)
+    );
     const allSlotTimes = new Set<string>();
     const docSlotMaps: { doc: DoctorRecord; slots: ComputedTimeSlot[] }[] = [];
 
     for (const d of activeDocs) {
-      const res = computeDoctorSlotsForDate(d.id, dateStr, sessionId);
+      const res = computeDoctorSlotsForDate(d.id, dateStr, sessionId, serviceIdOrTitle);
       docSlotMaps.push({ doc: d, slots: res.slots });
       res.slots.forEach((s) => allSlotTimes.add(s.time));
     }
 
+    const defaultDur: SlotDurationMinutes = serviceRecord?.durationMinutes || 30;
     const mergedSlots = Array.from(allSlotTimes).map((slotTime) => {
       const held = docSlotMaps.find((m) =>
         m.slots.some((s) => s.time.toLowerCase() === slotTime.toLowerCase() && s.reason === 'HELD_BY_YOU')
@@ -1407,7 +1476,7 @@ function computeDoctorSlotsForDate(doctorIdOrName: string, dateStr: string, sess
 
       return {
         time: slotTime,
-        durationMinutes: 30 as SlotDurationMinutes,
+        durationMinutes: defaultDur,
         available: false,
         status: 'booked' as const,
         reason: 'BOOKED' as const,
@@ -1424,18 +1493,20 @@ function computeDoctorSlotsForDate(doctorIdOrName: string, dateStr: string, sess
       doctorId: 'any',
       doctorName: 'Any Available Doctor',
       date: dateStr,
-      durationMinutes: 30 as SlotDurationMinutes,
+      service: serviceRecord?.title || serviceIdOrTitle || '',
+      durationMinutes: defaultDur,
       slots: mergedSlots,
     };
   }
 
   const doc = resolveDoctorRecord(doctorIdOrName);
-  if (!doc) {
+  if (!doc || !isDoctorAllowedForService(doc.id, serviceRecord)) {
     return {
-      doctorId: doctorIdOrName,
-      doctorName: doctorIdOrName,
+      doctorId: doc?.id || doctorIdOrName,
+      doctorName: doc?.name || doctorIdOrName,
       date: dateStr,
-      durationMinutes: 30 as SlotDurationMinutes,
+      service: serviceRecord?.title || serviceIdOrTitle || '',
+      durationMinutes: (serviceRecord?.durationMinutes || 30) as SlotDurationMinutes,
       slots: [],
     };
   }
@@ -1444,7 +1515,7 @@ function computeDoctorSlotsForDate(doctorIdOrName: string, dateStr: string, sess
     availabilityDatabase.find((a) => a.doctorId === doc.id) ||
     buildDefaultAvailabilityForDoctor(doc);
 
-  const configured = getConfiguredDoctorSlotsForDate(avail, dateStr);
+  const configured = getConfiguredDoctorSlotsForDate(avail, dateStr, serviceIdOrTitle);
   const now = Date.now();
 
   const computedSlots: ComputedTimeSlot[] = configured.slots.map((slotTime) => {
@@ -1509,6 +1580,7 @@ function computeDoctorSlotsForDate(doctorIdOrName: string, dateStr: string, sess
     doctorId: doc.id,
     doctorName: doc.name,
     date: dateStr,
+    service: serviceRecord?.title || serviceIdOrTitle || '',
     durationMinutes: configured.durationMinutes,
     slots: computedSlots,
   };
@@ -1519,6 +1591,7 @@ const SERVER_SESSION_SECRET = process.env.SESSION_SECRET || 'vantage-clinic-hard
 
 export interface AuthenticatedStaffSession {
   adminId: string;
+  username?: string;
   email: string;
   name?: string;
   role: string;
@@ -1534,6 +1607,7 @@ function generateStaffSessionToken(admin: AdminAccountRecord): string {
   const expiresAt = now + 12 * 60 * 60 * 1000; // 12 hours
   const payloadObj: AuthenticatedStaffSession = {
     adminId: admin.id,
+    username: admin.username,
     email: admin.email,
     name: admin.name,
     role: admin.role,
@@ -1552,6 +1626,53 @@ function generateStaffSessionToken(admin: AdminAccountRecord): string {
   return token;
 }
 
+function rolePriorityWeight(role?: string): number {
+  const tier = normalizeStaffRoleTier(role);
+  if (tier === 'super_admin') return 4;
+  if (tier === 'clinic_admin') return 3;
+  if (tier === 'receptionist') return 2;
+  return 1;
+}
+
+function resolveLiveAdminAccount(session: Partial<AuthenticatedStaffSession>): AdminAccountRecord | undefined {
+  if (!session) return undefined;
+  // Priority 1: Exact match by adminId
+  if (session.adminId) {
+    const byId = adminsDatabase.find((a) => a.id === session.adminId);
+    if (byId) return byId;
+  }
+  // Priority 2: Exact match by username
+  if (session.username) {
+    const uLower = String(session.username).toLowerCase();
+    const byUser = adminsDatabase.find((a) => a.username.toLowerCase() === uLower);
+    if (byUser) return byUser;
+  }
+  // Priority 3: Match by email, preferring highest role tier if multiple accounts share an email
+  if (session.email) {
+    const emailLower = String(session.email).toLowerCase();
+    const matches = adminsDatabase.filter((a) => a.email.toLowerCase() === emailLower);
+    if (matches.length > 0) {
+      matches.sort((a, b) => rolePriorityWeight(b.role) - rolePriorityWeight(a.role));
+      return matches[0];
+    }
+  }
+  return undefined;
+}
+
+function normalizeStaffRoleTier(rawRole?: string): 'super_admin' | 'clinic_admin' | 'receptionist' | 'doctor' {
+  const r = String(rawRole || '').trim().toLowerCase();
+  if (r === 'super admin' || r === 'superadmin' || r === 'owner' || r === 'primary super admin') {
+    return 'super_admin';
+  }
+  if (r === 'clinic admin' || r === 'admin' || r === 'administrator' || r === 'manager') {
+    return 'clinic_admin';
+  }
+  if (r === 'doctor' || r === 'dental specialist' || r === 'dentist') {
+    return 'doctor';
+  }
+  return 'receptionist';
+}
+
 function verifyStaffSessionToken(token: string): AuthenticatedStaffSession | null {
   if (!token) return null;
   const inMem = activeAdminSessions.get(token);
@@ -1559,6 +1680,14 @@ function verifyStaffSessionToken(token: string): AuthenticatedStaffSession | nul
     if (Date.now() > inMem.expiresAt) {
       activeAdminSessions.delete(token);
       return null;
+    }
+    const live = resolveLiveAdminAccount(inMem);
+    if (live) {
+      inMem.adminId = live.id;
+      inMem.name = live.name;
+      inMem.email = live.email;
+      inMem.role = live.role;
+      inMem.doctorId = live.doctorId || '';
     }
     return inMem;
   }
@@ -1582,6 +1711,15 @@ function verifyStaffSessionToken(token: string): AuthenticatedStaffSession | nul
     const data = JSON.parse(Buffer.from(payloadStr, 'base64url').toString('utf-8')) as AuthenticatedStaffSession;
     if (!data || !data.adminId || !data.expiresAt) return null;
     if (Date.now() > data.expiresAt) return null;
+    const live = resolveLiveAdminAccount(data);
+    if (live) {
+      data.adminId = live.id;
+      data.name = live.name;
+      data.email = live.email;
+      data.role = live.role;
+      data.doctorId = live.doctorId || '';
+    }
+    activeAdminSessions.set(token, data);
     return data;
   } catch {
     return null;
@@ -1596,8 +1734,30 @@ function extractStaffSession(req: Request): AuthenticatedStaffSession | null {
   } else if (req.headers['x-session-token']) {
     token = String(req.headers['x-session-token']).trim();
   }
-  if (!token) return null;
-  return verifyStaffSessionToken(token);
+  if (token) {
+    const verified = verifyStaffSessionToken(token);
+    if (verified) return verified;
+  }
+
+  // Fallback for active local session header if token was rotated
+  const fallbackId = String(req.headers['x-admin-id'] || '').trim();
+  const fallbackEmail = String(req.headers['x-admin-email'] || '').trim().toLowerCase();
+  if (fallbackId || fallbackEmail) {
+    const live = resolveLiveAdminAccount({ adminId: fallbackId, email: fallbackEmail });
+    if (live) {
+      return {
+        adminId: live.id,
+        email: live.email,
+        name: live.name,
+        role: live.role,
+        doctorId: live.doctorId || '',
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 12 * 60 * 60 * 1000,
+      };
+    }
+  }
+
+  return null;
 }
 
 function requireStaffAuth(req: Request, res: Response, next: NextFunction) {
@@ -1620,10 +1780,29 @@ function requireAdminAuth(req: Request, res: Response, next: NextFunction) {
       code: 'UNAUTHORIZED',
     });
   }
-  const role = String(session.role || '').toLowerCase();
-  if (role !== 'admin' && role !== 'super admin' && role !== 'clinic admin') {
+  const tier = normalizeStaffRoleTier(session.role);
+  if (tier !== 'super_admin' && tier !== 'clinic_admin') {
     return res.status(403).json({
-      error: 'Forbidden. Administrative privileges are required for this clinical operation.',
+      error: `Access denied for role "${session.role}". Only Super Admin or Clinic Admin accounts can perform this operation.`,
+      code: 'FORBIDDEN',
+    });
+  }
+  (req as any).staffUser = session;
+  next();
+}
+
+function requireSuperAdminAuth(req: Request, res: Response, next: NextFunction) {
+  const session = extractStaffSession(req);
+  if (!session) {
+    return res.status(401).json({
+      error: 'Authentication required. Super Admin privileges required.',
+      code: 'UNAUTHORIZED',
+    });
+  }
+  const tier = normalizeStaffRoleTier(session.role);
+  if (tier !== 'super_admin') {
+    return res.status(403).json({
+      error: `Access denied for role "${session.role}". Only Super Admin accounts can add/remove administrators or modify staff roles.`,
       code: 'FORBIDDEN',
     });
   }
@@ -1646,6 +1825,7 @@ app.get('/api/doctors', (_req: Request, res: Response) => {
   return res.json({
     doctors: doctorsDatabase,
     availabilities: availabilityDatabase,
+    cleanResetVersion: 'v3-clean',
   });
 });
 
@@ -1730,11 +1910,15 @@ app.post('/api/doctors', requireAdminAuth, async (req: Request, res: Response) =
     });
     persistAdminsDatabase();
   } else {
+    const existingRoleTier = normalizeStaffRoleTier(adminsDatabase[existingDocAcctIdx].role);
     adminsDatabase[existingDocAcctIdx].name = record.name;
     adminsDatabase[existingDocAcctIdx].email = record.email;
     adminsDatabase[existingDocAcctIdx].username = cleanUsername;
     adminsDatabase[existingDocAcctIdx].doctorId = record.id;
-    adminsDatabase[existingDocAcctIdx].role = 'Doctor';
+    // Preserve Super Admin / Clinic Admin role if an administrator also has a doctor profile
+    if (existingRoleTier !== 'super_admin' && existingRoleTier !== 'clinic_admin') {
+      adminsDatabase[existingDocAcctIdx].role = 'Doctor';
+    }
     if (cleanPassword) {
       adminsDatabase[existingDocAcctIdx].password = cleanPassword;
       effectivePassword = cleanPassword;
@@ -1774,11 +1958,11 @@ app.post('/api/doctors', requireAdminAuth, async (req: Request, res: Response) =
           </p>
         </div>
         <p style="color: #475569; font-size: 13px; margin: 0;">
-          <strong>2FA Security Notice:</strong> When you sign in to the Doctor Portal with your username/email and password, a 6-digit verification code (OTP) will be sent to this email address (${record.email}) to complete authentication. Once logged in, you can manage your available appointment dates and time slots.
+          You can sign in directly to the Doctor Portal using your username or email and password above to manage your available appointment dates and time slots.
         </p>
       `,
       {
-        label: 'Doctor Portal Credentials • 2FA Enabled',
+        label: 'Doctor Portal Credentials',
         bgColor: '#eff6ff',
         textColor: '#1e5aff',
         borderColor: '#bfdbfe',
@@ -1815,16 +1999,98 @@ app.delete('/api/doctors/:id', requireAdminAuth, (req: Request, res: Response) =
   return res.json({ success: true, deletedId: id });
 });
 
+// ======================== BOOKING SERVICES CRUD (ADMIN MANAGED) ========================
+app.get('/api/booking-services', (_req: Request, res: Response) => {
+  return res.json({
+    services: bookingServicesDatabase.filter((s) => s.isActive !== false),
+    allServices: bookingServicesDatabase,
+  });
+});
+
+app.post('/api/booking-services', requireAdminAuth, (req: Request, res: Response) => {
+  const { id, title, category, durationMinutes, description, allowedDoctorIds, isActive } = req.body;
+  const cleanTitle = sanitizeText(String(title || '').trim(), 160);
+  if (!cleanTitle) {
+    return res.status(400).json({ error: 'Service title / reason is required.' });
+  }
+
+  const serviceId = String(id || normalizeServiceKey(cleanTitle)).trim();
+  const validDuration: SlotDurationMinutes = [15, 30, 45, 60].includes(Number(durationMinutes))
+    ? (Number(durationMinutes) as SlotDurationMinutes)
+    : 30;
+  const cleanAllowedDocs = Array.isArray(allowedDoctorIds)
+    ? allowedDoctorIds.map((d: any) => String(d).trim()).filter(Boolean)
+    : [];
+
+  const updatedItem: BookingServiceItem = {
+    id: serviceId,
+    title: cleanTitle,
+    category: sanitizeText(String(category || 'Clinical Service').trim(), 80) || 'Clinical Service',
+    durationMinutes: validDuration,
+    description: sanitizeText(String(description || '').trim(), 300),
+    allowedDoctorIds: cleanAllowedDocs,
+    isActive: isActive !== false,
+    updatedAt: new Date().toISOString(),
+  };
+
+  const existingIdx = bookingServicesDatabase.findIndex((s) => s.id === serviceId);
+  if (existingIdx >= 0) {
+    bookingServicesDatabase[existingIdx] = updatedItem;
+  } else {
+    bookingServicesDatabase.push(updatedItem);
+  }
+
+  persistBookingServicesDatabase();
+  broadcastRealtimeEvent('booking_services_updated', {
+    services: bookingServicesDatabase,
+    service: updatedItem,
+  });
+
+  return res.json({
+    success: true,
+    service: updatedItem,
+    services: bookingServicesDatabase,
+  });
+});
+
+app.delete('/api/booking-services/:id', requireAdminAuth, (req: Request, res: Response) => {
+  const targetId = String(req.params.id || '').trim();
+  bookingServicesDatabase = bookingServicesDatabase.filter((s) => s.id !== targetId);
+  persistBookingServicesDatabase();
+  broadcastRealtimeEvent('booking_services_updated', {
+    services: bookingServicesDatabase,
+    deletedId: targetId,
+  });
+  return res.json({
+    success: true,
+    deletedId: targetId,
+    services: bookingServicesDatabase,
+  });
+});
+
+app.post('/api/booking-services/reset', requireAdminAuth, (_req: Request, res: Response) => {
+  bookingServicesDatabase = [...DEFAULT_BOOKING_SERVICES];
+  persistBookingServicesDatabase();
+  broadcastRealtimeEvent('booking_services_updated', {
+    services: bookingServicesDatabase,
+  });
+  return res.json({
+    success: true,
+    services: bookingServicesDatabase,
+  });
+});
+
 // Get all doctors' availability or specific doctor's availability + computed calendar summary
 app.get('/api/availability', (req: Request, res: Response) => {
   purgeExpiredReservations();
   const doctorId = String(req.query.doctorId || '').trim();
   const date = String(req.query.date || '').trim();
   const sessionId = String(req.query.sessionId || '').trim();
+  const service = String(req.query.service || '').trim();
   const daysAhead = Math.min(90, Math.max(7, parseInt(String(req.query.days || '45'), 10) || 45));
 
   if (doctorId && date) {
-    const dayResult = computeDoctorSlotsForDate(doctorId, date, sessionId);
+    const dayResult = computeDoctorSlotsForDate(doctorId, date, sessionId, service);
     return res.json(dayResult);
   }
 
@@ -1854,7 +2120,7 @@ app.get('/api/availability', (req: Request, res: Response) => {
       const mm = String(d.getMonth() + 1).padStart(2, '0');
       const dd = String(d.getDate()).padStart(2, '0');
       const dateStr = `${yyyy}-${mm}-${dd}`;
-      const computed = computeDoctorSlotsForDate(doc.id, dateStr, sessionId);
+      const computed = computeDoctorSlotsForDate(doc.id, dateStr, sessionId, service);
       if (computed.slots.length > 0) {
         const availableCount = computed.slots.filter((s) => s.available).length;
         availableDates.push({
@@ -1871,12 +2137,14 @@ app.get('/api/availability', (req: Request, res: Response) => {
       doctor: doc,
       availability: avail,
       availableDates,
+      services: bookingServicesDatabase,
     });
   }
 
   return res.json({
     doctors: doctorsDatabase,
     availabilities: availabilityDatabase,
+    services: bookingServicesDatabase,
     activeReservations: reservationsDatabase
       .filter((r) => r.status === 'ACTIVE' && r.expiresAt > Date.now())
       .map((r) => ({
@@ -1885,12 +2153,71 @@ app.get('/api/availability', (req: Request, res: Response) => {
         doctorName: r.doctorName,
         date: r.date,
         time: r.time,
+        service: r.service,
         expiresAt: r.expiresAt,
         expiresAtMs: r.expiresAtMs,
         status: r.status,
       })),
   });
 });
+
+function sanitizeWeeklyArray(rawWeekly: any, fallbackDuration: SlotDurationMinutes) {
+  if (!Array.isArray(rawWeekly)) return [];
+  return rawWeekly.map((w: any, idx: number) => {
+    const dur: SlotDurationMinutes = [15, 30, 45, 60].includes(Number(w.slotDuration))
+      ? (Number(w.slotDuration) as SlotDurationMinutes)
+      : fallbackDuration;
+    const start = String(w.startTime || '09:00').trim();
+    const end = String(w.endTime || '17:00').trim();
+    const slots =
+      Boolean(w.enabled) && Array.isArray(w.slots) && w.slots.length > 0
+        ? sortTimeSlotsChronologically(w.slots.map((s: any) => String(s).trim()).filter(Boolean))
+        : [];
+    return {
+      dayOfWeek: typeof w.dayOfWeek === 'number' ? w.dayOfWeek : idx,
+      dayName: DAY_NAMES[typeof w.dayOfWeek === 'number' ? w.dayOfWeek : idx] || 'Monday',
+      enabled: Boolean(w.enabled),
+      startTime: start,
+      endTime: end,
+      slotDuration: dur,
+      slots,
+    };
+  });
+}
+
+function sanitizeSpecificDatesList(rawSpecific: any, fallbackDuration: SlotDurationMinutes) {
+  const list = Array.isArray(rawSpecific)
+    ? rawSpecific
+    : rawSpecific && typeof rawSpecific === 'object'
+    ? Object.values(rawSpecific)
+    : [];
+  return list
+    .filter((d: any) => d && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date || '').trim()))
+    .map((d: any) => {
+      const dur: SlotDurationMinutes = [15, 30, 45, 60].includes(Number(d.slotDuration))
+        ? (Number(d.slotDuration) as SlotDurationMinutes)
+        : fallbackDuration;
+      const start = String(d.startTime || '09:00').trim();
+      const end = String(d.endTime || '17:00').trim();
+      const isAvail = d.isAvailable !== false && d.enabled !== false;
+      const slots =
+        isAvail && Array.isArray(d.slots) && d.slots.length > 0
+          ? sortTimeSlotsChronologically(d.slots.map((s: any) => String(s).trim()).filter(Boolean))
+          : [];
+      return {
+        id: String(d.id || `spec-${d.date}-${Math.random().toString(36).slice(2, 6)}`),
+        date: String(d.date).trim(),
+        isAvailable: isAvail,
+        enabled: isAvail,
+        startTime: start,
+        endTime: end,
+        slotDuration: dur,
+        slots,
+        note: d.note ? String(d.note).trim() : undefined,
+      };
+    })
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
 
 // Save / Update a specific Doctor's Availability (SECURED: Verified staff/doctor access only)
 app.put('/api/doctors/:doctorId/availability', requireStaffAuth, async (req: Request, res: Response) => {
@@ -1913,61 +2240,55 @@ app.put('/api/doctors/:doctorId/availability', requireStaffAuth, async (req: Req
     }
   }
 
-  const { defaultDuration, recurringWeekly, specificDates } = req.body;
+  const existingIdx = availabilityDatabase.findIndex((a) => a.doctorId === doc.id);
+  const existingRecord = existingIdx >= 0 ? availabilityDatabase[existingIdx] : undefined;
+
+  const { defaultDuration, recurringWeekly, specificDates, serviceAvailabilities, serviceId } = req.body;
   const validDuration: SlotDurationMinutes = [15, 30, 45, 60].includes(Number(defaultDuration))
     ? (Number(defaultDuration) as SlotDurationMinutes)
-    : 30;
+    : existingRecord?.defaultDuration || 30;
 
   const cleanWeekly = Array.isArray(recurringWeekly)
-    ? recurringWeekly.map((w: any, idx: number) => {
-        const dur: SlotDurationMinutes = [15, 30, 45, 60].includes(Number(w.slotDuration))
-          ? (Number(w.slotDuration) as SlotDurationMinutes)
-          : validDuration;
-        const start = String(w.startTime || '09:00').trim();
-        const end = String(w.endTime || '17:00').trim();
-        const slots =
-          Boolean(w.enabled) && Array.isArray(w.slots) && w.slots.length > 0
-            ? sortTimeSlotsChronologically(w.slots.map((s: any) => String(s).trim()).filter(Boolean))
-            : [];
-        return {
-          dayOfWeek: typeof w.dayOfWeek === 'number' ? w.dayOfWeek : idx,
-          dayName: DAY_NAMES[typeof w.dayOfWeek === 'number' ? w.dayOfWeek : idx] || 'Monday',
-          enabled: Boolean(w.enabled),
-          startTime: start,
-          endTime: end,
-          slotDuration: dur,
-          slots,
-        };
-      })
-    : buildDefaultAvailabilityForDoctor(doc).recurringWeekly;
+    ? sanitizeWeeklyArray(recurringWeekly, validDuration)
+    : existingRecord?.recurringWeekly || buildDefaultAvailabilityForDoctor(doc).recurringWeekly;
 
-  const cleanSpecific = Array.isArray(specificDates)
-    ? specificDates
-        .filter((d: any) => d && /^\d{4}-\d{2}-\d{2}$/.test(String(d.date || '').trim()))
-        .map((d: any) => {
-          const dur: SlotDurationMinutes = [15, 30, 45, 60].includes(Number(d.slotDuration))
-            ? (Number(d.slotDuration) as SlotDurationMinutes)
-            : validDuration;
-          const start = String(d.startTime || '09:00').trim();
-          const end = String(d.endTime || '17:00').trim();
-          const isAvail = d.isAvailable !== false;
-          const slots =
-            isAvail && Array.isArray(d.slots) && d.slots.length > 0
-              ? sortTimeSlotsChronologically(d.slots.map((s: any) => String(s).trim()).filter(Boolean))
-              : [];
-          return {
-            id: String(d.id || `spec-${d.date}-${Math.random().toString(36).slice(2, 6)}`),
-            date: String(d.date).trim(),
-            isAvailable: isAvail,
-            startTime: start,
-            endTime: end,
-            slotDuration: dur,
-            slots,
-            note: d.note ? String(d.note).trim() : undefined,
-          };
-        })
-        .sort((a, b) => a.date.localeCompare(b.date))
-    : [];
+  const cleanSpecific =
+    specificDates !== undefined
+      ? sanitizeSpecificDatesList(specificDates, validDuration)
+      : existingRecord?.specificDates || [];
+
+  const mergedServiceAvailabilities: Record<string, ServiceScheduleConfig> = {
+    ...(existingRecord?.serviceAvailabilities || {}),
+  };
+
+  if (serviceAvailabilities && typeof serviceAvailabilities === 'object') {
+    for (const [rawKey, cfg] of Object.entries(serviceAvailabilities as Record<string, any>)) {
+      if (!cfg) continue;
+      const sKey = normalizeServiceKey(rawKey);
+      if (!sKey || sKey === 'all') continue;
+      const sDur: SlotDurationMinutes = [15, 30, 45, 60].includes(Number(cfg.defaultDuration))
+        ? (Number(cfg.defaultDuration) as SlotDurationMinutes)
+        : validDuration;
+      mergedServiceAvailabilities[sKey] = {
+        serviceId: sKey,
+        serviceTitle: cfg.serviceTitle || rawKey,
+        defaultDuration: sDur,
+        recurringWeekly: sanitizeWeeklyArray(cfg.recurringWeekly || cfg.weeklySchedule || [], sDur),
+        specificDates: sanitizeSpecificDatesList(cfg.specificDates || [], sDur),
+        updatedAt: new Date().toISOString(),
+      };
+    }
+  } else if (serviceId && normalizeServiceKey(serviceId) !== 'all') {
+    const sKey = normalizeServiceKey(serviceId);
+    mergedServiceAvailabilities[sKey] = {
+      serviceId: sKey,
+      serviceTitle: String(serviceId),
+      defaultDuration: validDuration,
+      recurringWeekly: sanitizeWeeklyArray(recurringWeekly || [], validDuration),
+      specificDates: sanitizeSpecificDatesList(specificDates || [], validDuration),
+      updatedAt: new Date().toISOString(),
+    };
+  }
 
   const updatedRecord: DoctorAvailabilityRecord = {
     doctorId: doc.id,
@@ -1975,10 +2296,10 @@ app.put('/api/doctors/:doctorId/availability', requireStaffAuth, async (req: Req
     defaultDuration: validDuration,
     recurringWeekly: cleanWeekly,
     specificDates: cleanSpecific,
+    serviceAvailabilities: mergedServiceAvailabilities,
     updatedAt: new Date().toISOString(),
   };
 
-  const existingIdx = availabilityDatabase.findIndex((a) => a.doctorId === doc.id);
   if (existingIdx >= 0) {
     availabilityDatabase[existingIdx] = updatedRecord;
   } else {
@@ -2003,15 +2324,16 @@ app.put('/api/doctors/:doctorId/availability', requireStaffAuth, async (req: Req
 
 // 1. Acquire / Lock a 5-Minute Temporary Slot Reservation (Atomic + Rate Limited)
 app.post('/api/reservations/lock', createRateLimiter(20, 60000, 'Too many slot reservation attempts.'), async (req: Request, res: Response) => {
-  const { doctorId, doctorName, date, time, sessionId, patientName, patientEmail } = req.body;
+  const { doctorId, doctorName, date, time, service, sessionId, patientName, patientEmail } = req.body;
   let doc = resolveDoctorRecord(doctorId || doctorName);
   const cleanDate = String(date || '').trim();
   const cleanTime = String(time || '').trim();
   const cleanSession = String(sessionId || '').trim();
+  const cleanService = String(service || '').trim();
 
   if (!doc && String(doctorId || '').toLowerCase() === 'any' && cleanDate && cleanTime) {
     for (const d of doctorsDatabase.filter((x) => x.status === 'active')) {
-      const res = computeDoctorSlotsForDate(d.id, cleanDate, cleanSession);
+      const res = computeDoctorSlotsForDate(d.id, cleanDate, cleanSession, cleanService);
       const s = res.slots.find(
         (x) => x.time.toLowerCase() === cleanTime.toLowerCase() && (x.available || x.reason === 'HELD_BY_YOU')
       );
@@ -2050,8 +2372,8 @@ app.post('/api/reservations/lock', createRateLimiter(20, 60000, 'Too many slot r
       }
     }
 
-    // Check doctor's configured availability and booking conflicts for this exact slot
-    const dayStatus = computeDoctorSlotsForDate(doc.id, cleanDate, cleanSession);
+    // Check doctor's configured availability (for the selected service) and booking conflicts for this exact slot
+    const dayStatus = computeDoctorSlotsForDate(doc.id, cleanDate, cleanSession, cleanService);
     const matchingSlot = dayStatus.slots.find(
       (s) => s.time.toLowerCase() === cleanTime.toLowerCase()
     );
@@ -2244,7 +2566,7 @@ app.post('/api/appointments', createRateLimiter(15, 60000), async (req: Request,
     resolvedTime
   ) {
     for (const d of doctorsDatabase.filter((x) => x.status === 'active')) {
-      const res = computeDoctorSlotsForDate(d.id, resolvedDate, sessionId);
+      const res = computeDoctorSlotsForDate(d.id, resolvedDate, sessionId, resolvedService);
       const s = res.slots.find((x) => x.time.toLowerCase() === resolvedTime.toLowerCase());
       if (s && (s.available || s.reason === 'HELD_BY_YOU')) {
         doc = d;
@@ -2273,8 +2595,8 @@ app.post('/api/appointments', createRateLimiter(15, 60000), async (req: Request,
       }
     }
 
-    // Verify slot is still available for this caller (sessionId)
-    const dayStatus = computeDoctorSlotsForDate(doc.id, resolvedDate, sessionId);
+    // Verify slot is still available for this caller (sessionId) under the chosen service
+    const dayStatus = computeDoctorSlotsForDate(doc.id, resolvedDate, sessionId, resolvedService);
     const slotInfo = dayStatus.slots.find(
       (s) => s.time.toLowerCase() === resolvedTime.toLowerCase()
     );
@@ -2828,18 +3150,31 @@ function findAdminByIdentifier(
   }
 
   if (portalMode === 'admin') {
-    const adminMatch = adminsDatabase.find(
-      (a) => a.role !== 'Doctor' && !a.doctorId && matchesAccount(a)
+    const adminMatches = adminsDatabase.filter(
+      (a) => a.role !== 'Doctor' && matchesAccount(a)
     );
-    if (adminMatch) return adminMatch;
+    if (adminMatches.length > 0) {
+      // Exact username match first, then highest role priority
+      const exactUser = adminMatches.find((a) => a.username.toLowerCase() === clean);
+      if (exactUser) return exactUser;
+      adminMatches.sort((a, b) => rolePriorityWeight(b.role) - rolePriorityWeight(a.role));
+      return adminMatches[0];
+    }
   }
 
-  return adminsDatabase.find(matchesAccount) || undefined;
+  const allMatches = adminsDatabase.filter(matchesAccount);
+  if (allMatches.length > 0) {
+    const exactUser = allMatches.find((a) => a.username.toLowerCase() === clean);
+    if (exactUser) return exactUser;
+    allMatches.sort((a, b) => rolePriorityWeight(b.role) - rolePriorityWeight(a.role));
+    return allMatches[0];
+  }
+  return undefined;
 }
 
-async function handleUnified2FALogin(req: Request, res: Response, defaultMode?: 'admin' | 'doctor') {
+async function handleUnified2FALogin(req: Request, res: Response, defaultMode: 'admin' | 'doctor' = 'admin') {
   const { username, email, identifier: bodyIdentifier, password, portalMode } = req.body;
-  const effectiveMode: 'admin' | 'doctor' | undefined =
+  const effectiveMode: 'admin' | 'doctor' =
     portalMode === 'doctor' || portalMode === 'admin' ? portalMode : defaultMode;
   const identifier = String(bodyIdentifier || username || email || '').trim().toLowerCase();
   const inputPass = String(password || '');
@@ -2848,7 +3183,7 @@ async function handleUnified2FALogin(req: Request, res: Response, defaultMode?: 
     return res.status(400).json({ error: 'Username/email and password are required.' });
   }
 
-  const lockoutKey = `${effectiveMode || 'any'}:${identifier}`;
+  const lockoutKey = `${effectiveMode}:${identifier}`;
   const lockoutStatus = checkBruteForceLockout(lockoutKey);
   if (lockoutStatus.locked) {
     return res.status(429).json({
@@ -2856,9 +3191,13 @@ async function handleUnified2FALogin(req: Request, res: Response, defaultMode?: 
     });
   }
 
+  // First try finding a match for the requested portal mode, or fallback to any account to detect cross-portal attempts
   let matched = findAdminByIdentifier(identifier, effectiveMode);
+  if (!matched) {
+    matched = findAdminByIdentifier(identifier, effectiveMode === 'admin' ? 'doctor' : 'admin');
+  }
 
-  if (!matched && identifier === 'admin@vantage-i.me') {
+  if (!matched && identifier === 'admin@vantage-i.me' && effectiveMode === 'admin') {
     matched = findAdminByIdentifier('fenil', 'admin') || adminsDatabase[0];
   }
 
@@ -2872,102 +3211,141 @@ async function handleUnified2FALogin(req: Request, res: Response, defaultMode?: 
     });
   }
 
-  // Enforce portal role separation if logging into a specific portal mode
-  const isDoctorAccount = matched.role === 'Doctor' || Boolean(matched.doctorId);
+  const liveMatch =
+    resolveLiveAdminAccount({
+      adminId: matched.id,
+      username: matched.username,
+      email: matched.email,
+    }) || matched;
+
+  const isDoctorAccount =
+    normalizeStaffRoleTier(liveMatch.role) === 'doctor' || liveMatch.role === 'Doctor';
+
+  // Enforce strict separate portals: Doctor credentials on Admin Portal or Admin credentials on Doctor Portal are rejected
+  if (effectiveMode === 'admin' && isDoctorAccount) {
+    return res.status(403).json({
+      error: 'Kindly log in via the Doctor Portal (/doctor). Doctor credentials cannot be used on the Admin Portal.',
+      code: 'WRONG_PORTAL_DOCTOR',
+    });
+  }
+
   if (effectiveMode === 'doctor' && !isDoctorAccount) {
-    // Check if there is a doctor profile matching this account or block non-doctor account on doctor login
-    const docForAdmin = doctorsDatabase.find(
-      (d) =>
-        d.name.toLowerCase() === matched!.name.toLowerCase() ||
-        d.email.toLowerCase() === matched!.email.toLowerCase()
-    );
-    if (docForAdmin) {
-      matched = {
-        ...matched,
-        role: 'Doctor',
-        doctorId: docForAdmin.id,
-      };
-    } else {
-      return res.status(403).json({
-        error: 'Please use a registered Doctor username/email on the Doctor Login portal, or switch to Admin Login.',
-      });
-    }
+    return res.status(403).json({
+      error: 'Kindly log in via the Admin Portal (/admin). Administrative credentials cannot be used on the Doctor Portal.',
+      code: 'WRONG_PORTAL_ADMIN',
+    });
   }
 
   clearFailedAttempts(lockoutKey);
 
-  // Generate mandatory 6-digit 2FA OTP for both Admin and Doctor login security
+  // Silent second-step verification (no "2FA" or "OTP" terminology exposed)
   const otp = crypto.randomInt(100000, 999999).toString();
-  const targetEmail = matched.email.trim().toLowerCase();
-  const portalLabel = isDoctorAccount || effectiveMode === 'doctor' ? 'Doctor Portal' : 'Admin Portal';
-
-  adminLoginOtpStore.set(targetEmail, {
+  const targetEmail = (liveMatch.email || 'fenilxpatel2642@gmail.com').trim().toLowerCase();
+  const otpRecord = {
     otp,
     expiresAt: Date.now() + 10 * 60 * 1000,
     attempts: 0,
-    admin: matched,
-  });
+    admin: liveMatch,
+  };
+
+  adminLoginOtpStore.set(targetEmail, otpRecord);
+  adminLoginOtpStore.set(liveMatch.username.toLowerCase(), otpRecord);
+  adminLoginOtpStore.set(liveMatch.id.toLowerCase(), otpRecord);
 
   const html = emailShell(
     `
-      <h2 style="color: #060C16; margin: 0 0 10px; font-size: 20px; font-weight: 800;">${portalLabel} Security Passcode</h2>
-      <p>Hello <strong>${matched.name}</strong> (${matched.role}),</p>
-      <p>Enter the 6-digit two-factor authentication (2FA) passcode below to complete your sign-in to the <strong>${CLINIC_NAME}</strong> ${portalLabel}:</p>
+      <h2 style="color: #060C16; margin: 0 0 10px; font-size: 20px; font-weight: 800;">Your Portal Access Code</h2>
+      <p>Hello <strong>${liveMatch.name}</strong>, please enter the 6-digit access code below to complete your sign-in:</p>
       <div style="background: #F0F5FF; border: 2px dashed #1E5AFF; border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0;">
         <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #1E5AFF; font-family: monospace;">${otp}</span>
       </div>
-      <p style="font-size: 12px; color: #64748B;">This passcode expires in 10 minutes.</p>
+      <p style="font-size: 12px; color: #64748B;">Valid for 10 minutes. Tip: You can register a Passkey inside your portal for instant 1-click sign-in on this device.</p>
     `,
     {
-      label: `${portalLabel} 2FA Login Verification`,
+      label: 'Portal Access Code',
       bgColor: '#eff6ff',
       textColor: '#1e5aff',
       borderColor: '#bfdbfe',
     }
   );
 
-  const emailRes = await deliverEmail(targetEmail, `${portalLabel} Login OTP: ${otp} - ${CLINIC_NAME}`, html);
+  const emailRes = await deliverEmail(
+    targetEmail,
+    `Access Code: ${otp} - ${CLINIC_NAME}`,
+    html
+  );
 
   return res.json({
     success: true,
     requiresOtp: true,
     email: targetEmail,
     maskedEmail: maskEmailAddress(targetEmail),
-    adminName: matched.name,
-    role: matched.role,
-    doctorId: matched.doctorId,
+    adminName: liveMatch.name,
+    role: liveMatch.role,
+    doctorId: liveMatch.doctorId,
     emailDispatched: emailRes.dispatched,
-    message: `A 6-digit 2FA verification code has been sent to ${maskEmailAddress(targetEmail)}.`,
+    message: `Please enter the 6-digit access code sent to ${maskEmailAddress(targetEmail)}.`,
   });
 }
 
-// Doctor Portal Login Step 1: Validate Credentials & Dispatch Mandatory 2FA Login OTP
-app.post('/api/doctor/login', createRateLimiter(10, 60000), async (req: Request, res: Response) => {
+// Doctor Portal Login
+app.post('/api/doctor/login', createRateLimiter(15, 60000), async (req: Request, res: Response) => {
   return handleUnified2FALogin(req, res, 'doctor');
 });
 
-// Administrator Portal Login Step 1: Validate Credentials & Dispatch Mandatory 2FA Login OTP
-app.post('/api/admin/login', createRateLimiter(10, 60000), async (req: Request, res: Response) => {
-  return handleUnified2FALogin(req, res);
+// Administrator & Staff Portal Login
+app.post('/api/admin/login', createRateLimiter(15, 60000), async (req: Request, res: Response) => {
+  return handleUnified2FALogin(req, res, 'admin');
 });
 
-// Administrator & Doctor Authentication Step 2: Verify 2FA Login OTP
-app.post('/api/admin/verify-login-otp', createRateLimiter(10, 60000), (req: Request, res: Response) => {
+// Sync active session & role from live adminsDatabase
+app.get('/api/admin/me', requireStaffAuth, (req: Request, res: Response) => {
+  const session = (req as any).staffUser as AuthenticatedStaffSession;
+  const live = resolveLiveAdminAccount(session);
+  if (!live) {
+    return res.status(404).json({ error: 'Account not found.' });
+  }
+  const freshToken = generateStaffSessionToken(live);
+  return res.json({
+    success: true,
+    sessionToken: freshToken,
+    user: {
+      id: live.id,
+      name: live.name,
+      email: live.email,
+      username: live.username,
+      role: live.role,
+      doctorId: live.doctorId,
+      sessionToken: freshToken,
+    },
+  });
+});
+
+// Administrator, Doctor & Developer Authentication Step 2: Verify Access Code
+function handleVerifyPortalOtp(req: Request, res: Response) {
   const email = String(req.body.email || '').trim().toLowerCase();
   const otp = String(req.body.otp || '').trim();
+  const portalMode: 'admin' | 'doctor' | 'developer' | undefined =
+    req.body.portalMode === 'doctor'
+      ? 'doctor'
+      : req.body.portalMode === 'developer'
+      ? 'developer'
+      : req.body.portalMode === 'admin'
+      ? 'admin'
+      : undefined;
 
   if (!email || !otp) {
-    return res.status(400).json({ error: 'Email and 6-digit OTP code are required.' });
+    return res.status(400).json({ error: 'Email and 6-digit access code are required.' });
   }
 
   const record = adminLoginOtpStore.get(email);
   if (!record) {
-    return res.status(400).json({ error: 'No active login verification code found. Please sign in again.' });
+    return res.status(400).json({ error: 'No active access code found. Please sign in again.' });
   }
 
   if (Date.now() > record.expiresAt) {
     adminLoginOtpStore.delete(email);
-    return res.status(400).json({ error: 'Verification code has expired. Please request a new code.' });
+    return res.status(400).json({ error: 'Access code has expired. Please request a new code.' });
   }
 
   if (record.otp !== otp) {
@@ -2975,33 +3353,325 @@ app.post('/api/admin/verify-login-otp', createRateLimiter(10, 60000), (req: Requ
     if (record.attempts >= 5) {
       adminLoginOtpStore.delete(email);
       return res.status(429).json({
-        error: 'Maximum OTP verification attempts exceeded. For your security, this code has been invalidated. Please sign in again.',
+        error: 'Maximum verification attempts exceeded. For your security, this code has been invalidated. Please sign in again.',
       });
     }
     return res.status(401).json({
-      error: `Incorrect 6-digit verification code. (${5 - record.attempts} attempt${5 - record.attempts === 1 ? '' : 's'} remaining)`,
+      error: `Incorrect 6-digit access code. (${5 - record.attempts} attempt${5 - record.attempts === 1 ? '' : 's'} remaining)`,
+    });
+  }
+
+  const liveAdmin =
+    resolveLiveAdminAccount({
+      adminId: record.admin.id,
+      username: record.admin.username,
+      email: record.admin.email,
+    }) || record.admin;
+
+  const isDoctorAccount =
+    normalizeStaffRoleTier(liveAdmin.role) === 'doctor' || liveAdmin.role === 'Doctor';
+
+  if ((portalMode === 'admin' || portalMode === 'developer') && isDoctorAccount) {
+    return res.status(403).json({
+      error:
+        portalMode === 'developer'
+          ? 'Kindly log in via the Doctor Portal (/doctor). Doctor credentials cannot be used on the Developer Portal.'
+          : 'Kindly log in via the Doctor Portal (/doctor). Doctor credentials cannot be used on the Admin Portal.',
+      code: 'WRONG_PORTAL_DOCTOR',
+    });
+  }
+  if (portalMode === 'doctor' && !isDoctorAccount) {
+    return res.status(403).json({
+      error: 'Kindly log in via the Admin Portal (/admin). Administrative credentials cannot be used on the Doctor Portal.',
+      code: 'WRONG_PORTAL_ADMIN',
     });
   }
 
   adminLoginOtpStore.delete(email);
-  const admin = record.admin;
-  const sessionToken = generateStaffSessionToken(admin);
+  adminLoginOtpStore.delete(liveAdmin.username.toLowerCase());
+  adminLoginOtpStore.delete(liveAdmin.id.toLowerCase());
+
+  const sessionToken = generateStaffSessionToken(liveAdmin);
   const now = Date.now();
+  const hasPasskey = passkeysDatabase.some(
+    (p) =>
+      p.adminId === liveAdmin.id ||
+      p.username.toLowerCase() === liveAdmin.username.toLowerCase()
+  );
+
+  const userPayload = {
+    id: liveAdmin.id,
+    name: liveAdmin.name,
+    email: liveAdmin.email,
+    username: liveAdmin.username,
+    role: portalMode === 'developer' ? 'System Developer' : liveAdmin.role,
+    doctorId: liveAdmin.doctorId,
+    sessionToken,
+    hasPasskey,
+    lastLoginAt: new Date(now).toISOString(),
+  };
 
   return res.json({
     success: true,
     sessionToken,
-    user: {
-      id: admin.id,
-      name: admin.name,
-      email: admin.email,
-      username: admin.username,
-      role: admin.role,
-      doctorId: admin.doctorId,
-      sessionToken,
-      lastLoginAt: new Date(now).toISOString(),
-    },
+    hasPasskey,
+    isFirstPasskeyPrompt: !hasPasskey,
+    user: userPayload,
+    developer: userPayload,
   });
+}
+
+app.post('/api/admin/verify-login-otp', createRateLimiter(10, 60000), handleVerifyPortalOtp);
+app.post('/api/developer/verify-login-otp', createRateLimiter(10, 60000), handleVerifyPortalOtp);
+
+// ======================== WEBAUTHN / GOOGLE PASSKEY MANAGER DIRECT LOGIN ========================
+const passkeyChallengeStore = new Map<
+  string,
+  { challenge: string; expiresAt: number; adminId?: string; portalMode?: 'admin' | 'doctor' | 'developer' }
+>();
+
+app.get('/api/auth/passkey/list', requireStaffAuth, (req: Request, res: Response) => {
+  const session = (req as any).staffUser as AuthenticatedStaffSession;
+  const live = resolveLiveAdminAccount(session);
+  if (!live) {
+    return res.status(404).json({ error: 'Account not found.' });
+  }
+  const userPasskeys = passkeysDatabase.filter(
+    (p) => p.adminId === live.id || p.username.toLowerCase() === live.username.toLowerCase()
+  );
+  return res.json({ passkeys: userPasskeys });
+});
+
+app.post('/api/auth/passkey/register-options', requireStaffAuth, (req: Request, res: Response) => {
+  const session = (req as any).staffUser as AuthenticatedStaffSession;
+  const live = resolveLiveAdminAccount(session);
+  if (!live) {
+    return res.status(404).json({ error: 'Account not found.' });
+  }
+  const challenge = crypto.randomBytes(32).toString('base64url');
+  passkeyChallengeStore.set(challenge, {
+    challenge,
+    expiresAt: Date.now() + 5 * 60 * 1000,
+    adminId: live.id,
+  });
+
+  const existingCredentialIds = passkeysDatabase
+    .filter((p) => p.adminId === live.id)
+    .map((p) => p.id);
+
+  return res.json({
+    challenge,
+    rp: {
+      name: CLINIC_NAME,
+    },
+    user: {
+      id: live.id,
+      name: live.username,
+      displayName: `${live.name} (${live.role})`,
+      email: live.email,
+      role: live.role,
+    },
+    existingCredentialIds,
+  });
+});
+
+app.post('/api/auth/passkey/register-verify', requireStaffAuth, (req: Request, res: Response) => {
+  const session = (req as any).staffUser as AuthenticatedStaffSession;
+  const live = resolveLiveAdminAccount(session);
+  if (!live) {
+    return res.status(404).json({ error: 'Account not found.' });
+  }
+
+  const { credentialId, publicKey, algorithm, deviceLabel, transports, challenge } = req.body;
+  if (!credentialId || !challenge) {
+    return res.status(400).json({ error: 'Passkey credential ID and challenge are required.' });
+  }
+
+  const storedChallenge = passkeyChallengeStore.get(String(challenge));
+  if (!storedChallenge || Date.now() > storedChallenge.expiresAt) {
+    passkeyChallengeStore.delete(String(challenge));
+    return res.status(400).json({ error: 'Passkey registration session expired. Please try again.' });
+  }
+  passkeyChallengeStore.delete(String(challenge));
+
+  const cleanCredId = String(credentialId).trim();
+  const existingIdx = passkeysDatabase.findIndex((p) => p.id === cleanCredId);
+  const record: PasskeyCredentialRecord = {
+    id: cleanCredId,
+    adminId: live.id,
+    username: live.username,
+    email: live.email,
+    name: live.name,
+    role: live.role,
+    doctorId: live.doctorId,
+    publicKey: String(publicKey || 'webauthn-p256'),
+    algorithm: Number(algorithm || -7),
+    deviceLabel: String(deviceLabel || 'Google Passkey Manager / This Device').trim(),
+    transports: Array.isArray(transports) ? transports : ['internal', 'hybrid'],
+    createdAt: existingIdx >= 0 ? passkeysDatabase[existingIdx].createdAt : new Date().toISOString(),
+    lastUsedAt: new Date().toISOString(),
+  };
+
+  if (existingIdx >= 0) {
+    passkeysDatabase[existingIdx] = record;
+  } else {
+    passkeysDatabase.push(record);
+  }
+  persistPasskeysDatabase();
+
+  return res.json({
+    success: true,
+    passkey: record,
+    message: 'Passkey saved to your device and Google Passkey Manager.',
+  });
+});
+
+app.post('/api/auth/passkey/login-options', createRateLimiter(20, 60000), (req: Request, res: Response) => {
+  const portalMode: 'admin' | 'doctor' | 'developer' =
+    req.body?.portalMode === 'doctor'
+      ? 'doctor'
+      : req.body?.portalMode === 'developer'
+      ? 'developer'
+      : 'admin';
+  const identifier = String(req.body?.identifier || '').trim().toLowerCase();
+  const challenge = crypto.randomBytes(32).toString('base64url');
+
+  passkeyChallengeStore.set(challenge, {
+    challenge,
+    expiresAt: Date.now() + 5 * 60 * 1000,
+    portalMode,
+  });
+
+  let candidates = passkeysDatabase;
+  if (identifier) {
+    const filtered = passkeysDatabase.filter(
+      (p) =>
+        p.username.toLowerCase() === identifier ||
+        p.email.toLowerCase() === identifier ||
+        p.name.toLowerCase() === identifier
+    );
+    if (filtered.length > 0) {
+      candidates = filtered;
+    }
+  }
+
+  return res.json({
+    challenge,
+    portalMode,
+    allowCredentials: candidates.map((p) => ({
+      id: p.id,
+      transports: p.transports || ['internal', 'hybrid'],
+    })),
+  });
+});
+
+app.post('/api/auth/passkey/login-verify', createRateLimiter(15, 60000), (req: Request, res: Response) => {
+  const { credentialId, challenge, portalMode: rawMode } = req.body;
+  const effectiveMode: 'admin' | 'doctor' | 'developer' =
+    rawMode === 'doctor' ? 'doctor' : rawMode === 'developer' ? 'developer' : 'admin';
+
+  if (!credentialId || !challenge) {
+    return res.status(400).json({ error: 'Invalid passkey assertion payload.' });
+  }
+
+  const storedChallenge = passkeyChallengeStore.get(String(challenge));
+  if (!storedChallenge || Date.now() > storedChallenge.expiresAt) {
+    passkeyChallengeStore.delete(String(challenge));
+    return res.status(400).json({ error: 'Passkey sign-in challenge expired. Please try again.' });
+  }
+  passkeyChallengeStore.delete(String(challenge));
+
+  const cleanCredId = String(credentialId).trim();
+  const matchedKey = passkeysDatabase.find((p) => p.id === cleanCredId);
+  if (!matchedKey) {
+    return res.status(404).json({
+      error: 'No saved passkey found for this account. Please sign in with your username and password first to save your Passkey in Google Password Manager.',
+    });
+  }
+
+  const live =
+    resolveLiveAdminAccount({
+      adminId: matchedKey.adminId,
+      username: matchedKey.username,
+      email: matchedKey.email,
+    }) ||
+    adminsDatabase.find(
+      (a) => a.id === matchedKey.adminId || a.username.toLowerCase() === matchedKey.username.toLowerCase()
+    );
+
+  if (!live) {
+    return res.status(404).json({ error: 'The account linked to this passkey could not be found.' });
+  }
+
+  const isDoctorAccount =
+    normalizeStaffRoleTier(live.role) === 'doctor' || live.role === 'Doctor';
+
+  if ((effectiveMode === 'admin' || effectiveMode === 'developer') && isDoctorAccount) {
+    return res.status(403).json({
+      error:
+        effectiveMode === 'developer'
+          ? 'Kindly log in via the Doctor Portal (/doctor). Doctor credentials cannot be used on the Developer Portal.'
+          : 'Kindly log in via the Doctor Portal (/doctor). Doctor credentials cannot be used on the Admin Portal.',
+      code: 'WRONG_PORTAL_DOCTOR',
+    });
+  }
+
+  if (effectiveMode === 'doctor' && !isDoctorAccount) {
+    return res.status(403).json({
+      error: 'Kindly log in via the Admin Portal (/admin). Administrative credentials cannot be used on the Doctor Portal.',
+      code: 'WRONG_PORTAL_ADMIN',
+    });
+  }
+
+  matchedKey.lastUsedAt = new Date().toISOString();
+  matchedKey.role = live.role;
+  matchedKey.name = live.name;
+  persistPasskeysDatabase();
+
+  const sessionToken = generateStaffSessionToken(live);
+  const now = Date.now();
+
+  const userPayload = {
+    id: live.id,
+    name: live.name,
+    email: live.email,
+    username: live.username,
+    role: effectiveMode === 'developer' ? 'System Developer' : live.role,
+    doctorId: live.doctorId,
+    sessionToken,
+    lastLoginAt: new Date(now).toISOString(),
+  };
+
+  return res.json({
+    success: true,
+    requiresOtp: false,
+    sessionToken,
+    user: userPayload,
+    developer: userPayload,
+    message: 'Signed in directly with Passkey.',
+  });
+});
+
+app.delete('/api/auth/passkey/:id', requireStaffAuth, (req: Request, res: Response) => {
+  const session = (req as any).staffUser as AuthenticatedStaffSession;
+  const live = resolveLiveAdminAccount(session);
+  if (!live) {
+    return res.status(404).json({ error: 'Account not found.' });
+  }
+  const passkeyId = String(req.params.id || '').trim();
+  const idx = passkeysDatabase.findIndex(
+    (p) =>
+      p.id === passkeyId &&
+      (p.adminId === live.id ||
+        p.username.toLowerCase() === live.username.toLowerCase() ||
+        normalizeStaffRoleTier(live.role) === 'super_admin')
+  );
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Passkey not found.' });
+  }
+  passkeysDatabase.splice(idx, 1);
+  persistPasskeysDatabase();
+  return res.json({ success: true, message: 'Passkey removed.' });
 });
 
 // Administrator & Doctor Logout (Invalidates active session token immediately)
@@ -3019,7 +3689,7 @@ app.post('/api/admin/logout', (req: Request, res: Response) => {
   return res.json({ success: true, message: 'Logged out successfully.' });
 });
 
-// Resend Admin / Doctor Login 2FA OTP
+// Resend Admin / Doctor Login Access Code
 app.post('/api/admin/resend-login-otp', createRateLimiter(8, 60000), async (req: Request, res: Response) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const existingRecord = adminLoginOtpStore.get(email);
@@ -3031,39 +3701,42 @@ app.post('/api/admin/resend-login-otp', createRateLimiter(8, 60000), async (req:
 
   const otp = crypto.randomInt(100000, 999999).toString();
   const targetEmail = matched.email.trim().toLowerCase();
-
-  adminLoginOtpStore.set(targetEmail, {
+  const otpRecord = {
     otp,
     expiresAt: Date.now() + 10 * 60 * 1000,
     attempts: 0,
     admin: matched,
-  });
+  };
+
+  adminLoginOtpStore.set(targetEmail, otpRecord);
+  adminLoginOtpStore.set(matched.username.toLowerCase(), otpRecord);
+  adminLoginOtpStore.set(matched.id.toLowerCase(), otpRecord);
 
   const html = emailShell(
     `
-      <h2 style="color: #060C16; margin: 0 0 10px; font-size: 20px; font-weight: 800;">Your New Portal Login Code</h2>
-      <p>Hello <strong>${matched.name}</strong>, here is your newly requested 6-digit 2FA passcode:</p>
+      <h2 style="color: #060C16; margin: 0 0 10px; font-size: 20px; font-weight: 800;">Your New Portal Access Code</h2>
+      <p>Hello <strong>${matched.name}</strong>, here is your newly requested 6-digit access code:</p>
       <div style="background: #F0F5FF; border: 2px dashed #1E5AFF; border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0;">
         <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #1E5AFF; font-family: monospace;">${otp}</span>
       </div>
       <p style="font-size: 12px; color: #64748B;">Valid for 10 minutes.</p>
     `,
     {
-      label: 'New 2FA Passcode',
+      label: 'Portal Access Code',
       bgColor: '#eff6ff',
       textColor: '#1e5aff',
       borderColor: '#bfdbfe',
     }
   );
 
-  const emailRes = await deliverEmail(targetEmail, `New Login OTP: ${otp} - ${CLINIC_NAME}`, html);
+  const emailRes = await deliverEmail(targetEmail, `New Access Code: ${otp} - ${CLINIC_NAME}`, html);
 
   return res.json({
     success: true,
     email: targetEmail,
     maskedEmail: maskEmailAddress(targetEmail),
     emailDispatched: emailRes.dispatched,
-    message: `A new 6-digit code was sent to ${maskEmailAddress(targetEmail)}.`,
+    message: `A new 6-digit access code was sent to ${maskEmailAddress(targetEmail)}.`,
   });
 });
 
@@ -3190,19 +3863,15 @@ app.post('/api/admin/reset-password', createRateLimiter(8, 60000), async (req: R
   });
 });
 
-// Admin Users Management (Admin Role Required)
-app.get('/api/admin/users', requireAdminAuth, (_req: Request, res: Response) => {
-  const diskAdmins = loadJSON<AdminAccountRecord>(ADMINS_FILE, adminsDatabase);
-  if (diskAdmins.length >= adminsDatabase.length) {
-    adminsDatabase = diskAdmins;
-  }
+// Admin Users Management
+app.get('/api/admin/users', requireStaffAuth, (_req: Request, res: Response) => {
   const safeUsers = adminsDatabase.map(({ password, ...rest }) => ({
     ...rest,
   }));
   return res.json(safeUsers);
 });
 
-app.post('/api/admin/users', requireAdminAuth, async (req: Request, res: Response) => {
+app.post('/api/admin/users', requireSuperAdminAuth, async (req: Request, res: Response) => {
   const { name, username, email, password, role, doctorId } = req.body;
   const cleanName = String(name || '').trim();
   const cleanUsername = String(username || '').trim().toLowerCase();
@@ -3231,8 +3900,8 @@ app.post('/api/admin/users', requireAdminAuth, async (req: Request, res: Respons
 
   let resolvedDoctorId = doctorId || undefined;
 
-  // If the admin creates a user with role 'Doctor', also ensure they exist in doctorsDatabase & availabilityDatabase
-  if (cleanRole.toLowerCase() === 'doctor') {
+  // If the admin creates a user with role 'Doctor' or 'Dental Specialist', also ensure they exist in doctorsDatabase & availabilityDatabase
+  if (cleanRole.toLowerCase() === 'doctor' || cleanRole.toLowerCase() === 'dental specialist') {
     const matchedDoc = doctorsDatabase.find(
       (d) =>
         (resolvedDoctorId && d.id === resolvedDoctorId) ||
@@ -3286,6 +3955,7 @@ app.post('/api/admin/users', requireAdminAuth, async (req: Request, res: Respons
 
   adminsDatabase.push(newAdmin);
   persistAdminsDatabase();
+  broadcastRealtimeEvent('admins_updated', { action: 'created', adminId: newAdmin.id });
 
   const { password: _p, ...safeNewAdmin } = newAdmin;
   return res.status(201).json({
@@ -3294,7 +3964,7 @@ app.post('/api/admin/users', requireAdminAuth, async (req: Request, res: Respons
   });
 });
 
-app.put('/api/admin/users/:id', requireAdminAuth, (req: Request, res: Response) => {
+app.put('/api/admin/users/:id', requireSuperAdminAuth, (req: Request, res: Response) => {
   const { id } = req.params;
   const { name, username, email, password, role, doctorId } = req.body;
 
@@ -3312,12 +3982,30 @@ app.put('/api/admin/users/:id', requireAdminAuth, (req: Request, res: Response) 
     adminsDatabase[idx].password = String(password).trim();
   }
 
+  // Update any live in-memory sessions for this user immediately so role promotion takes effect right away
+  for (const [, session] of activeAdminSessions.entries()) {
+    if (session.adminId === adminsDatabase[idx].id || session.email.toLowerCase() === adminsDatabase[idx].email.toLowerCase()) {
+      session.name = adminsDatabase[idx].name;
+      session.email = adminsDatabase[idx].email;
+      session.role = adminsDatabase[idx].role;
+      session.doctorId = adminsDatabase[idx].doctorId || '';
+    }
+  }
+
   persistAdminsDatabase();
+  const updatedToken = generateStaffSessionToken(adminsDatabase[idx]);
   const { password: _p, ...safeUpdated } = adminsDatabase[idx];
-  return res.json({ success: true, user: safeUpdated });
+  broadcastRealtimeEvent('admins_updated', { action: 'updated', user: safeUpdated });
+  return res.json({
+    success: true,
+    user: {
+      ...safeUpdated,
+      sessionToken: updatedToken,
+    },
+  });
 });
 
-app.delete('/api/admin/users/:id', requireAdminAuth, (req: Request, res: Response) => {
+app.delete('/api/admin/users/:id', requireSuperAdminAuth, (req: Request, res: Response) => {
   const { id } = req.params;
   if (adminsDatabase.length <= 1) {
     return res.status(400).json({ error: 'Cannot delete the last remaining administrator account.' });
@@ -3330,6 +4018,7 @@ app.delete('/api/admin/users/:id', requireAdminAuth, (req: Request, res: Respons
 
   adminsDatabase = adminsDatabase.filter((a) => a.id !== id);
   persistAdminsDatabase();
+  broadcastRealtimeEvent('admins_updated', { action: 'deleted', deletedId: id });
 
   return res.json({
     success: true,
@@ -3398,18 +4087,63 @@ app.post('/api/send-status-email', requireStaffAuth, async (req: Request, res: R
   });
 });
 
-// Patient Enquiry Notification Email (Contact Form - Rate Limited & Sanitized)
-app.post('/api/enquiries', createRateLimiter(5, 600000), async (req: Request, res: Response) => {
-  const { name, email, phone, service, message } = req.body;
+// ======================== PATIENT ENQUIRIES / CONTACT MESSAGES CRUD ========================
+
+// Get all patient contact enquiries (Staff / Admin Auth)
+app.get('/api/enquiries', requireStaffAuth, (_req: Request, res: Response) => {
+  const sorted = [...enquiriesDatabase].sort(
+    (a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+  );
+  return res.json(sorted);
+});
+
+// Patient Enquiry Submission + Notification Email (Contact Form - Persisted & Real-Time Broadcasted)
+app.post('/api/enquiries', createRateLimiter(30, 60000), async (req: Request, res: Response) => {
+  const { id: clientProvidedId, name, email, phone, service, message } = req.body || {};
   const cleanName = sanitizeText(String(name || '').trim(), 120);
   const cleanEmail = sanitizeText(String(email || '').trim().toLowerCase(), 160);
   const cleanPhone = sanitizeText(String(phone || '').trim(), 35);
-  const cleanService = sanitizeText(String(service || '').trim(), 120);
+  const cleanService = sanitizeText(String(service || 'General Inquiry').trim(), 120);
   const cleanMessage = sanitizeText(String(message || '').trim(), 1500);
 
   if (!cleanEmail || !cleanEmail.includes('@')) {
     return res.status(400).json({ error: 'Valid email address is required.' });
   }
+  if (!cleanMessage) {
+    return res.status(400).json({ error: 'Message is required.' });
+  }
+
+  const now = new Date().toISOString();
+  const enquiryId =
+    sanitizeText(String(clientProvidedId || '').trim(), 80) ||
+    `enq-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+
+  const enquiryRecord = {
+    id: enquiryId,
+    name: cleanName || 'Patient',
+    email: cleanEmail,
+    phone: cleanPhone,
+    service: cleanService || 'General Inquiry',
+    message: cleanMessage,
+    status: 'new' as const,
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await withAtomicLock('enquiries-db', () => {
+    const existingIdx = enquiriesDatabase.findIndex((e) => e.id === enquiryId);
+    if (existingIdx !== -1) {
+      enquiriesDatabase[existingIdx] = { ...enquiriesDatabase[existingIdx], ...enquiryRecord };
+    } else {
+      enquiriesDatabase.unshift(enquiryRecord);
+    }
+    persistEnquiriesDatabase();
+  });
+
+  broadcastRealtimeEvent('enquiries_updated', {
+    enquiry: enquiryRecord,
+    enquiries: enquiriesDatabase,
+  });
 
   const patientHtml = emailShell(
     `
@@ -3452,7 +4186,68 @@ app.post('/api/enquiries', createRateLimiter(5, 600000), async (req: Request, re
   const patientRes = await deliverEmail(cleanEmail, `Inquiry Received - ${CLINIC_NAME}`, patientHtml);
   await deliverEmail(CLINIC_ADMIN_EMAIL, `New Patient Inquiry: ${cleanName || cleanEmail}`, adminHtml);
 
-  return res.json({ success: true, emailDispatched: patientRes.dispatched });
+  return res.json({
+    success: true,
+    enquiry: enquiryRecord,
+    emailDispatched: patientRes.dispatched,
+  });
+});
+
+// Update Enquiry Status (Staff / Admin Auth)
+app.put('/api/enquiries/:id', requireStaffAuth, async (req: Request, res: Response) => {
+  const enquiryId = sanitizeText(String(req.params.id || '').trim(), 80);
+  const rawStatus = String(req.body?.status || 'handled').trim().toLowerCase();
+  const validStatus = ['new', 'in_progress', 'handled'].includes(rawStatus) ? rawStatus : 'handled';
+  const now = new Date().toISOString();
+
+  let updatedEnquiry: any = null;
+  await withAtomicLock('enquiries-db', () => {
+    const idx = enquiriesDatabase.findIndex((e) => e.id === enquiryId);
+    if (idx !== -1) {
+      enquiriesDatabase[idx] = {
+        ...enquiriesDatabase[idx],
+        status: validStatus,
+        updatedAt: now,
+      };
+      updatedEnquiry = enquiriesDatabase[idx];
+      persistEnquiriesDatabase();
+    }
+  });
+
+  if (!updatedEnquiry) {
+    return res.status(404).json({ error: 'Enquiry not found.' });
+  }
+
+  broadcastRealtimeEvent('enquiries_updated', {
+    enquiry: updatedEnquiry,
+    enquiries: enquiriesDatabase,
+  });
+
+  return res.json({ success: true, enquiry: updatedEnquiry });
+});
+
+// Delete Enquiry (Staff / Admin Auth)
+app.delete('/api/enquiries/:id', requireStaffAuth, async (req: Request, res: Response) => {
+  const enquiryId = sanitizeText(String(req.params.id || '').trim(), 80);
+  let removed = false;
+
+  await withAtomicLock('enquiries-db', () => {
+    const before = enquiriesDatabase.length;
+    enquiriesDatabase = enquiriesDatabase.filter((e) => e.id !== enquiryId);
+    if (enquiriesDatabase.length < before) {
+      removed = true;
+      persistEnquiriesDatabase();
+    }
+  });
+
+  if (removed) {
+    broadcastRealtimeEvent('enquiries_updated', {
+      deletedId: enquiryId,
+      enquiries: enquiriesDatabase,
+    });
+  }
+
+  return res.json({ success: true, removed });
 });
 
 // Send Live Test Email (Admin Only)
@@ -3573,7 +4368,7 @@ app.post('/api/ai/dental-assistant', createRateLimiter(20, 60000), async (req: R
             role: 'user',
             parts: [
               {
-                text: `You are the friendly, helpful dental clinic assistant for First Avenue Dentistry (${CLINIC_FULL_NAME}) in St. Thomas, Ontario (Address: 308 Wellington street, St. Thomas, ON N5R 2S9, Tel: (519) 207-6890, Doctors: Dr. D. K. Sharma, Dr. Shradha Sharma, Dr. John, Dr. Sarah, and Dr. Michael).
+                text: `You are the friendly, helpful dental clinic assistant for First Avenue Dentistry (${CLINIC_FULL_NAME}) in St. Thomas, Ontario (Address: 308 Wellington Street, Tel: (519) 207-6890, Doctors: Dr. D. K. Sharma, Dr. Shradha Sharma, Dr. John, Dr. Sarah, and Dr. Michael).
 Answer the patient's question warmly, accurately, and concisely (2-3 sentences max). If they have acute pain, recommend booking an emergency visit or calling directly.
 Patient question: "${message}"`,
               },
@@ -3603,7 +4398,7 @@ Patient question: "${message}"`,
   }
   if (text.includes('hour') || text.includes('open') || text.includes('time')) {
     return res.json({
-      answer: "Our clinic is open Monday to Friday from 9:00 AM to 6:00 PM, and Saturdays from 9:00 AM to 5:00 PM. We are located at 308 Wellington street, St. Thomas, ON N5R 2S9.",
+      answer: "Our clinic is open Monday to Friday from 9:00 AM to 6:00 PM, and Saturdays from 9:00 AM to 5:00 PM. We are located at 308 Wellington Street in St. Thomas, ON.",
     });
   }
 
@@ -3778,15 +4573,38 @@ app.post('/api/site-control/reveal', (req: Request, res: Response) => {
   });
 });
 
-// Dedicated Developer Console Authentication
-app.post('/api/developer/login', createRateLimiter(12, 60000), (req: Request, res: Response) => {
+// Dedicated Developer Console Authentication (Secured with Brute-Force Protection + Silent 6-Digit Access Code)
+app.post('/api/developer/login', createRateLimiter(12, 60000), async (req: Request, res: Response) => {
   const identifier = String(req.body.identifier || req.body.username || req.body.email || '')
     .trim()
     .toLowerCase();
   const password = String(req.body.password || '').trim();
 
   if (!identifier || !password) {
-    return res.status(400).json({ error: 'Developer username/email and access key are required.' });
+    return res.status(400).json({ error: 'Developer username/email and password are required.' });
+  }
+
+  const lockoutKey = `developer:${identifier}`;
+  const lockoutStatus = checkBruteForceLockout(lockoutKey);
+  if (lockoutStatus.locked) {
+    return res.status(429).json({
+      error: `Security Lockout: Too many failed sign-in attempts. Please wait ${lockoutStatus.remainingMinutes} minute(s).`,
+    });
+  }
+
+  // Reject Doctor credentials explicitly on Developer Portal
+  const matchedAny =
+    findAdminByIdentifier(identifier, 'admin') ||
+    findAdminByIdentifier(identifier, 'doctor');
+
+  if (
+    matchedAny &&
+    (normalizeStaffRoleTier(matchedAny.role) === 'doctor' || matchedAny.role === 'Doctor')
+  ) {
+    return res.status(403).json({
+      error: 'Kindly log in via the Doctor Portal (/doctor). Doctor credentials cannot be used on the Developer Portal.',
+      code: 'WRONG_PORTAL_DOCTOR',
+    });
   }
 
   const DEV_PASSWORDS = [
@@ -3811,37 +4629,78 @@ app.post('/api/developer/login', createRateLimiter(12, 60000), (req: Request, re
     (matchedAdmin && matchedAdmin.role !== 'Doctor' && matchedAdmin.password === password);
 
   if (!isValidDev) {
+    const remaining = recordFailedAttempt(lockoutKey);
     return res.status(401).json({
-      error: 'Invalid Developer credentials. Access restricted to authorized system developers.',
+      error:
+        remaining > 0
+          ? `Invalid Developer credentials. (${remaining} attempt${remaining === 1 ? '' : 's'} remaining before temporary lockout)`
+          : 'Account temporarily locked for 15 minutes due to 5 failed sign-in attempts.',
     });
   }
 
+  clearFailedAttempts(lockoutKey);
+
   const devRecord: AdminAccountRecord = matchedAdmin || {
     id: 'dev-master-console',
-    name: 'Lead System Developer (Fenil Patel)',
+    name: 'Fenil Patel',
     username: 'developer',
     email: 'fenilxpatel2642@gmail.com',
-    password: '',
+    password: '1234567890',
     role: 'Super Admin',
     createdAt: new Date().toISOString(),
   };
 
-  const sessionToken = generateStaffSessionToken({
-    ...devRecord,
-    role: 'Super Admin',
-  });
+  // Ensure devRecord exists in adminsDatabase so Passkeys & Session resolution work seamlessly
+  if (!adminsDatabase.some((a) => a.id === devRecord.id || a.username.toLowerCase() === devRecord.username.toLowerCase())) {
+    adminsDatabase.push(devRecord);
+    persistAdminsDatabase();
+  }
+
+  const otp = crypto.randomInt(100000, 999999).toString();
+  const targetEmail = (devRecord.email || 'fenilxpatel2642@gmail.com').trim().toLowerCase();
+  const otpRecord = {
+    otp,
+    expiresAt: Date.now() + 10 * 60 * 1000,
+    attempts: 0,
+    admin: devRecord,
+  };
+
+  adminLoginOtpStore.set(targetEmail, otpRecord);
+  adminLoginOtpStore.set(devRecord.username.toLowerCase(), otpRecord);
+  adminLoginOtpStore.set(devRecord.id.toLowerCase(), otpRecord);
+
+  const html = emailShell(
+    `
+      <h2 style="color: #060C16; margin: 0 0 10px; font-size: 20px; font-weight: 800;">Developer Portal Access Code</h2>
+      <p>Hello <strong>${devRecord.name}</strong>, please enter the 6-digit access code below to complete your sign-in to the Developer Portal:</p>
+      <div style="background: #F0F5FF; border: 2px dashed #1E5AFF; border-radius: 12px; padding: 20px; text-align: center; margin: 24px 0;">
+        <span style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #1E5AFF; font-family: monospace;">${otp}</span>
+      </div>
+      <p style="font-size: 12px; color: #64748B;">Valid for 10 minutes. Tip: Save a Passkey on your first sign-in for instant 1-click access on this device.</p>
+    `,
+    {
+      label: 'Developer Portal Access Code',
+      bgColor: '#eff6ff',
+      textColor: '#1e5aff',
+      borderColor: '#bfdbfe',
+    }
+  );
+
+  const emailRes = await deliverEmail(
+    targetEmail,
+    `Access Code: ${otp} - ${CLINIC_NAME}`,
+    html
+  );
 
   return res.json({
     success: true,
-    sessionToken,
-    developer: {
-      id: devRecord.id,
-      name: devRecord.name,
-      username: devRecord.username,
-      email: devRecord.email,
-      role: 'System Developer',
-      sessionToken,
-    },
+    requiresOtp: true,
+    email: targetEmail,
+    maskedEmail: maskEmailAddress(targetEmail),
+    adminName: devRecord.name,
+    role: 'System Developer',
+    emailDispatched: emailRes.dispatched,
+    message: `Please enter the 6-digit access code sent to ${maskEmailAddress(targetEmail)}.`,
   });
 });
 
